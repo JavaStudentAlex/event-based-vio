@@ -65,3 +65,4 @@ dummy_output
 .gsd-worktrees/
 .mypy_cache
 milestone_1_event_imu_vio.md
+.claude
