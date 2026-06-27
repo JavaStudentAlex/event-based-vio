@@ -16,7 +16,7 @@
 - [x] **S01: MVSEC Loader and Stream Contract** `risk:high` `depends:[]`
   > After this: A tiny synthetic MVSEC-like fixture and a documented real MVSEC path can be loaded into a common sequence object with events, IMU, calibration, ground truth, and timestamp metadata.
 
-- [ ] **S02: Synchronization and Trajectory Export Contract** `risk:high` `depends:[S01]`
+- [x] **S02: Synchronization and Trajectory Export Contract** `risk:high` `depends:[S01]`
   > After this: IMU samples and ground truth are timestamp-associated without silent drops, and a synthetic trajectory exports valid project CSV plus TUM files.
 
 - [ ] **S03: IMU Only Backend and CLI Run Path** `risk:medium` `depends:[S02]`

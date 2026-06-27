@@ -29,6 +29,7 @@ EXCLUDED_DIRS = {
     ".github",
     ".gsd",
     ".skills",
+    ".skillss",
     ".venv",
     "mutants",
     "skills",
@@ -40,6 +41,8 @@ ALSO_COPY = [
     Path("test"),
     Path("pyproject.toml"),
     Path("README.md"),
+    Path("src"),
+    Path("examples"),
 ]
 
 
@@ -87,6 +90,8 @@ def configure_mutmut(source_paths: list[Path]) -> None:
             "./.codex/*",
             ".gsd/*",
             "./.gsd/*",
+            ".skillss/*",
+            "./.skillss/*",
             ".skills/*",
             "./.skills/*",
             ".venv/*",
@@ -98,7 +103,7 @@ def configure_mutmut(source_paths: list[Path]) -> None:
         ],
         do_not_mutate_patterns=[],
         max_stack_depth=-1,
-        debug=False,
+        debug=True,
         mutate_only_covered_lines=False,
         source_paths=source_paths,
         pytest_add_cli_args=[],

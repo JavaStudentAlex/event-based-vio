@@ -1,7 +1,7 @@
 # GSD State
 
 **Active Milestone:** M001-ncx5an: MVSEC Pipeline and IMU Sanity Benchmark
-**Active Slice:** S02: Synchronization and Trajectory Export Contract
+**Active Slice:** S03: IMU Only Backend and CLI Run Path
 **Phase:** planning
 **Requirements Status:** 0 active · 0 validated · 0 deferred · 0 out of scope
 
@@ -11,14 +11,10 @@
 - ⬜ **M003:** Strong Baselines and Benchmark Reporting
 
 ## Recent Decisions
-- D003 (2026-06-27): Use `h5py` for first-pass MVSEC loading -> Read MVSEC HDF5 files directly with `h5py`; reserve `rosbags` for raw bag support later
-- D004 (2026-06-27): Keep project artifacts authoritative and TUM export interoperable -> Project CSV and `metrics.json` are the stable contract; TUM export supports SLAM/VIO tools such as `evo`
-- D005 (2026-06-27): Default M001 evaluation to explicit SE3 alignment -> Timestamp-associate estimates and ground truth, align with SE3 by default, and record policy in metrics/manifest metadata
-- D006 (2026-06-27): Define a stable minimal odometry backend interface in M001 -> `imu_only`, future `event_imu`, and later wrappers return a common result shape consumed by shared export/evaluation
-- D007 (2026-06-27): Store generated benchmark outputs under `runs/` -> Generated run artifacts live under `runs/` and should stay untracked
+- D001 (architecture): Nearest-neighbor timestamp association within caller-provided tolerance (no interpolation in S02); diagnostics are mandatory and include counts, ranges, first/last matched ts, overlap sufficiency; CSV export preserves all rows with health labels per fixed 15-column schema; TUM export includes only valid (OK/DEGRADED) poses and records filtered counts; timestamps are UNIX seconds with 9 decimal places; quaternion order is qx,qy,qz,qw. -> Locks externally-visible behavior so S03 CLI/backends and S04 evaluator can rely on deterministic association and artifact formats; avoids downstream rewrites and ensures CI can validate contract with synthetic fixtures.
 
 ## Blockers
 - None
 
 ## Next Action
-Slice S02 has no DB tasks. Plan slice tasks before execution.
+Slice S03 has no DB tasks. Plan slice tasks before execution.
