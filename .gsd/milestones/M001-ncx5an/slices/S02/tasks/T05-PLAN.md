@@ -4,7 +4,7 @@ estimated_files: 3
 skills_used: []
 ---
 
-# T05: Slice gate: lint, format, and test suite
+# T05: Ran Ruff linting, formatting checks, and the trajectory test suite to verify the S02 quality gates.
 
 Why: Enforce deterministic quality gates before S02 is considered done. Do: run ruff lint + format checks and the trajectory test subset to ensure style and behavior stability. Done when: all commands exit 0.
 

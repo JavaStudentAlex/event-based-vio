@@ -1,7 +1,7 @@
 # Codebase Map
 
-Generated: 2026-06-27T22:22:32Z | Files: 59 | Described: 0/59
-<!-- gsd:codebase-meta {"generatedAt":"2026-06-27T22:22:32Z","fingerprint":"46494f0ee9a6155da9972e5196d16addbb011599","fileCount":59,"truncated":false} -->
+Generated: 2026-06-27T22:26:40Z | Files: 60 | Described: 0/60
+<!-- gsd:codebase-meta {"generatedAt":"2026-06-27T22:26:40Z","fingerprint":"36b833c91378557b0853cd6fa86661a4c621a056","fileCount":60,"truncated":false} -->
 
 ### (root)/
 - `.gitignore`
@@ -100,6 +100,7 @@ Generated: 2026-06-27T22:22:32Z | Files: 59 | Described: 0/59
 - `tests/nav_benchmark/datasets/test_mvsec.py`
 
 ### tests/trajectory/
+- `tests/trajectory/test_export_contract_synthetic.py`
 - `tests/trajectory/test_export.py`
 - `tests/trajectory/test_models.py`
 - `tests/trajectory/test_sync.py`

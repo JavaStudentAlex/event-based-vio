@@ -4,7 +4,7 @@ estimated_files: 6
 skills_used: []
 ---
 
-# T04: ExportMetadata completeness and invariants pass
+# T04: Strengthened validation checks and constraints on trajectory SyncDiagnostics, ExportMetadata, and PoseHealth dataclasses.
 
 Why: S03/S05 rely on explicit metadata (timestamp unit=seconds, association policy+tolerance, frames, units, quaternion order, per-health counts, TUM filtered rows). Do: ensure ExportMetadata and SyncDiagnostics expose these fields exactly and adjust tests accordingly; keep behavior deterministic and avoid silent drops. Done when: full trajectory test suite passes.
 

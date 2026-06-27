@@ -41,12 +41,12 @@ S03 backends/CLI consume Trajectory + ExportMetadata and call export_project_csv
   - Files: `tests/trajectory/test_export_contract_synthetic.py`, `src/nav_benchmark/trajectory/export.py`, `src/nav_benchmark/trajectory/models.py`
   - Verify: rtk uv run pytest tests/trajectory/test_export_contract_synthetic.py -q
 
-- [ ] **T04: ExportMetadata completeness and invariants pass** `est:1.5h`
+- [x] **T04: Strengthened validation checks and constraints on trajectory SyncDiagnostics, ExportMetadata, and PoseHealth dataclasses.** `est:1.5h`
   Why: S03/S05 rely on explicit metadata (timestamp unit=seconds, association policy+tolerance, frames, units, quaternion order, per-health counts, TUM filtered rows). Do: ensure ExportMetadata and SyncDiagnostics expose these fields exactly and adjust tests accordingly; keep behavior deterministic and avoid silent drops. Done when: full trajectory test suite passes.
   - Files: `src/nav_benchmark/trajectory/models.py`, `src/nav_benchmark/trajectory/export.py`, `src/nav_benchmark/trajectory/sync.py`, `tests/trajectory/test_export.py`, `tests/trajectory/test_models.py`, `tests/trajectory/test_sync.py`
   - Verify: rtk uv run pytest tests/trajectory -q
 
-- [ ] **T05: Slice gate: lint, format, and test suite** `est:0.5h`
+- [x] **T05: Ran Ruff linting, formatting checks, and the trajectory test suite to verify the S02 quality gates.** `est:0.5h`
   Why: Enforce deterministic quality gates before S02 is considered done. Do: run ruff lint + format checks and the trajectory test subset to ensure style and behavior stability. Done when: all commands exit 0.
   - Files: `pyproject.toml`, `src/nav_benchmark/trajectory/`, `tests/trajectory/`
   - Verify: rtk uv run --only-dev ruff check . && rtk uv run --only-dev ruff format --check . && rtk uv run pytest tests/trajectory -q
