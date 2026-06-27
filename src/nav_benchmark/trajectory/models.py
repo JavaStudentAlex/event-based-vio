@@ -77,18 +77,17 @@ class SyncDiagnostics:
         self._validate_timestamps()
 
     def _validate_non_negative(self) -> None:
-        if self.source_count < 0:
-            raise ValueError("source_count must be non-negative")
-        if self.target_count < 0:
-            raise ValueError("target_count must be non-negative")
-        if self.matched_count < 0:
-            raise ValueError("matched_count must be non-negative")
-        if self.unmatched_source_count < 0:
-            raise ValueError("unmatched_source_count must be non-negative")
-        if self.unmatched_target_count < 0:
-            raise ValueError("unmatched_target_count must be non-negative")
-        if self.tolerance_sec < 0:
-            raise ValueError("tolerance_sec must be non-negative")
+        non_negative_fields = (
+            ("source_count", self.source_count),
+            ("target_count", self.target_count),
+            ("matched_count", self.matched_count),
+            ("unmatched_source_count", self.unmatched_source_count),
+            ("unmatched_target_count", self.unmatched_target_count),
+            ("tolerance_sec", self.tolerance_sec),
+        )
+        for name, value in non_negative_fields:
+            if value < 0:
+                raise ValueError(f"{name} must be non-negative")
         if not (0.0 <= self.overlap_sufficiency <= 1.0):
             raise ValueError("overlap_sufficiency must be between 0.0 and 1.0")
 
@@ -99,13 +98,14 @@ class SyncDiagnostics:
             raise ValueError("target_count must equal matched_count + unmatched_target_count")
 
     def _validate_timestamps(self) -> None:
+        none_count = (self.first_matched_timestamp is None) + (self.last_matched_timestamp is None)
         if self.matched_count == 0:
-            if self.first_matched_timestamp is not None or self.last_matched_timestamp is not None:
+            if none_count != 2:
                 raise ValueError("first/last matched timestamps must be None when matched_count is 0")
         else:
-            if self.first_matched_timestamp is None or self.last_matched_timestamp is None:
+            if none_count != 0:
                 raise ValueError("first/last matched timestamps must not be None when matched_count > 0")
-            if self.first_matched_timestamp > self.last_matched_timestamp:
+            if self.first_matched_timestamp > self.last_matched_timestamp:  # type: ignore[operator]
                 raise ValueError("first_matched_timestamp must be <= last_matched_timestamp")
 
 
@@ -126,18 +126,17 @@ class ExportMetadata:
         self._validate_numeric_fields()
 
     def _validate_required_fields(self) -> None:
-        if not self.timestamp_unit:
-            raise ValueError("timestamp_unit must not be empty")
-        if not self.association_policy:
-            raise ValueError("association_policy must not be empty")
-        if not self.source_frame:
-            raise ValueError("source_frame must not be empty")
-        if not self.target_frame:
-            raise ValueError("target_frame must not be empty")
-        if not self.position_units:
-            raise ValueError("position_units must not be empty")
-        if not self.orientation_format:
-            raise ValueError("orientation_format must not be empty")
+        required_fields = (
+            ("timestamp_unit", self.timestamp_unit),
+            ("association_policy", self.association_policy),
+            ("source_frame", self.source_frame),
+            ("target_frame", self.target_frame),
+            ("position_units", self.position_units),
+            ("orientation_format", self.orientation_format),
+        )
+        for name, value in required_fields:
+            if not value:
+                raise ValueError(f"{name} must not be empty")
 
     def _validate_numeric_fields(self) -> None:
         if self.association_tolerance_sec is not None and self.association_tolerance_sec < 0:

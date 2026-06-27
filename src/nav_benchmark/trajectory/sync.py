@@ -21,12 +21,7 @@ def synchronize_nearest_neighbor(
         matched_target_indices: Indices of matched target timestamps.
         diagnostics: SyncDiagnostics object.
     """
-    if tolerance_sec < 0:
-        raise ValueError("tolerance_sec must be non-negative")
-    if len(source_timestamps) > 1 and not np.all(np.diff(source_timestamps) > 0):
-        raise ValueError("source_timestamps must be strictly monotonically increasing")
-    if len(target_timestamps) > 1 and not np.all(np.diff(target_timestamps) > 0):
-        raise ValueError("target_timestamps must be strictly monotonically increasing")
+    _validate_inputs(source_timestamps, target_timestamps, tolerance_sec)
 
     if len(source_timestamps) == 0 or len(target_timestamps) == 0:
         return (
@@ -114,6 +109,22 @@ def synchronize_nearest_neighbor(
     )
 
     return matched_source_indices, matched_target_indices, diagnostics
+
+
+def _validate_inputs(
+    source_timestamps: np.ndarray,
+    target_timestamps: np.ndarray,
+    tolerance_sec: float,
+) -> None:
+    if tolerance_sec < 0:
+        raise ValueError("tolerance_sec must be non-negative")
+    _check_strictly_increasing(source_timestamps, "source_timestamps")
+    _check_strictly_increasing(target_timestamps, "target_timestamps")
+
+
+def _check_strictly_increasing(timestamps: np.ndarray, name: str) -> None:
+    if len(timestamps) > 1 and not np.all(np.diff(timestamps) > 0):
+        raise ValueError(f"{name} must be strictly monotonically increasing")
 
 
 def _find_ranges(timestamps: np.ndarray, mask: np.ndarray) -> list[tuple[float, float]]:
