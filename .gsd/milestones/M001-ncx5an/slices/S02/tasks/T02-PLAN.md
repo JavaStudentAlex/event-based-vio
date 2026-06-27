@@ -4,7 +4,7 @@ estimated_files: 4
 skills_used: []
 ---
 
-# T02: CSV + TUM export contract spec; author export contract doc
+# T02: Documented the CSV and TUM export contract and verified export diagnostics and formatting constraints.
 
 Why: All methods must emit the same CSV schema and interoperable TUM; S03/S05 will consume metadata. Do: verify/export behavior and author an export-contract doc that fixes column order/types, health filtering rules, quaternion order, and time base. Done when: export tests pass and docs/trajectory/export-contract.md exists capturing schema, filtering rules, and metadata fields.
 

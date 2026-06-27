@@ -31,12 +31,12 @@ S03 backends/CLI consume Trajectory + ExportMetadata and call export_project_csv
   - Files: `src/nav_benchmark/trajectory/sync.py`, `src/nav_benchmark/trajectory/models.py`, `tests/trajectory/test_sync.py`, `docs/trajectory/synchronization.md`
   - Verify: rtk uv run pytest tests/trajectory/test_sync.py -q && test -f docs/trajectory/synchronization.md
 
-- [ ] **T02: CSV + TUM export contract spec; author export contract doc** `est:2h`
+- [x] **T02: Documented the CSV and TUM export contract and verified export diagnostics and formatting constraints.** `est:2h`
   Why: All methods must emit the same CSV schema and interoperable TUM; S03/S05 will consume metadata. Do: verify/export behavior and author an export-contract doc that fixes column order/types, health filtering rules, quaternion order, and time base. Done when: export tests pass and docs/trajectory/export-contract.md exists capturing schema, filtering rules, and metadata fields.
   - Files: `src/nav_benchmark/trajectory/export.py`, `src/nav_benchmark/trajectory/models.py`, `tests/trajectory/test_export.py`, `docs/trajectory/export-contract.md`
   - Verify: rtk uv run pytest tests/trajectory/test_export.py -q && test -f docs/trajectory/export-contract.md
 
-- [ ] **T03: Synthetic end-to-end validator for export contract** `est:2h`
+- [x] **T03: Added synthetic end-to-end validator test suite for trajectory CSV and TUM export formats.** `est:2h`
   Why: CI needs a deterministic synthetic proof that exercises project CSV and TUM export end-to-end, including per-health counts and filtered-row stats. Do: add a dedicated synthetic test that builds a small Trajectory with OK/DEGRADED/LOST/INVALID rows, calls both exporters to a temp path, then asserts header/row shapes, health label preservation, TUM filtering, and metadata counts. Done when: new test passes locally.
   - Files: `tests/trajectory/test_export_contract_synthetic.py`, `src/nav_benchmark/trajectory/export.py`, `src/nav_benchmark/trajectory/models.py`
   - Verify: rtk uv run pytest tests/trajectory/test_export_contract_synthetic.py -q

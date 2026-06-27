@@ -1,7 +1,7 @@
 # Codebase Map
 
-Generated: 2026-06-27T22:16:16Z | Files: 57 | Described: 0/57
-<!-- gsd:codebase-meta {"generatedAt":"2026-06-27T22:16:16Z","fingerprint":"659ab86a72e24b27e44a4a196e14ba3bb8a9ef79","fileCount":57,"truncated":false} -->
+Generated: 2026-06-27T22:22:32Z | Files: 59 | Described: 0/59
+<!-- gsd:codebase-meta {"generatedAt":"2026-06-27T22:22:32Z","fingerprint":"46494f0ee9a6155da9972e5196d16addbb011599","fileCount":59,"truncated":false} -->
 
 ### (root)/
 - `.gitignore`
@@ -65,6 +65,10 @@ Generated: 2026-06-27T22:16:16Z | Files: 57 | Described: 0/57
 
 ### docs/datasets/
 - `docs/datasets/mvsec.md`
+
+### docs/trajectory/
+- `docs/trajectory/export-contract.md`
+- `docs/trajectory/synchronization.md`
 
 ### examples/
 - `examples/inspect_mvsec.py`

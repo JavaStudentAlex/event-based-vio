@@ -4,7 +4,7 @@ estimated_files: 3
 skills_used: []
 ---
 
-# T03: Synthetic end-to-end validator for export contract
+# T03: Added synthetic end-to-end validator test suite for trajectory CSV and TUM export formats.
 
 Why: CI needs a deterministic synthetic proof that exercises project CSV and TUM export end-to-end, including per-health counts and filtered-row stats. Do: add a dedicated synthetic test that builds a small Trajectory with OK/DEGRADED/LOST/INVALID rows, calls both exporters to a temp path, then asserts header/row shapes, health label preservation, TUM filtering, and metadata counts. Done when: new test passes locally.
 
