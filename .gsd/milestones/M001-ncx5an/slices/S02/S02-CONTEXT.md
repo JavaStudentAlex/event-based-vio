@@ -65,3 +65,10 @@ S02 locks the user-visible behavior for time association and artifact export tha
 - Duplicate timestamps policy is to reject with diagnostics. If real MVSEC data exhibits benign duplicates, should S02 add an opt-in de-dup mode (first/last-wins) guarded by explicit config?
 - Where to expose invalid-interval summaries beyond CSV health labels: rely on `SyncDiagnostics` only, or add an optional `invalid_intervals.csv` in S03 when runs exist?
 - What to emit for `latency_ms` in synthetic exports: constant 0 vs computed placeholder; ensure validators accept both as long as numeric and non-negative.
+
+## Implementation Notes
+
+- **Models**: `Trajectory`, `SyncDiagnostics`, `ExportMetadata`, and `PoseHealth` models have been implemented in `src/nav_benchmark/trajectory/models.py`. The `PoseHealth` choices map accurately to `OK`, `DEGRADED`, `LOST`, `INVALID`.
+- **Synchronization Policy**: A deterministic `synchronize_nearest_neighbor` policy has been added in `src/nav_benchmark/trajectory/sync.py`, matching sources to targets exactly within the caller-provided `tolerance_sec` without any silent interpolation. Diagnostics cover tracking match counts, range gaps, overlap sufficiency, and exact timestamps to expose mismatches directly.
+- **Export Formats**: Implemented `export_project_csv` and `export_tum` in `src/nav_benchmark/trajectory/export.py`. CSV export preserves every row with complete metadata labels, mapping directly to the 15-column benchmark contract schema. TUM export strictly filters out `LOST` and `INVALID` rows while returning filtered statistics through the updated `ExportMetadata`.
+- **Testing**: Added rigorous synthetic unit tests for the nearest-neighbor sync (including exact, duplicates, and empty edge cases) and both trajectory export utilities in `tests/trajectory/`.
