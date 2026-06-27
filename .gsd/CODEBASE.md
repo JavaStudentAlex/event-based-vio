@@ -1,14 +1,13 @@
 # Codebase Map
 
-Generated: 2026-06-27T15:24:33Z | Files: 41 | Described: 0/41
-<!-- gsd:codebase-meta {"generatedAt":"2026-06-27T15:24:33Z","fingerprint":"af54c476c4dd1a98aadc25e0b2e6275bdf276b23","fileCount":41,"truncated":false} -->
+Generated: 2026-06-27T18:12:27Z | Files: 47 | Described: 0/47
+<!-- gsd:codebase-meta {"generatedAt":"2026-06-27T18:12:27Z","fingerprint":"9757035e7a148ad1b0722fe635cda63e47cfa91f","fileCount":47,"truncated":false} -->
 
 ### (root)/
 - `.gitignore`
 - `.pre-commit-config.yaml`
 - `.python-version`
 - `AGENTS.md`
-- `gsd_mvsec_ensemble_plan.md`
 - `pyproject.toml`
 - `README.md`
 - `skills-lock.json`
@@ -65,3 +64,20 @@ Generated: 2026-06-27T15:24:33Z | Files: 41 | Described: 0/41
 
 ### scripts/
 - `scripts/download_mvsec.sh`
+
+### src/nav_benchmark/
+- `src/nav_benchmark/__init__.py`
+
+### src/nav_benchmark/datasets/
+- `src/nav_benchmark/datasets/__init__.py`
+- `src/nav_benchmark/datasets/mvsec.py`
+
+### tests/
+- `tests/__init__.py`
+
+### tests/nav_benchmark/
+- `tests/nav_benchmark/__init__.py`
+
+### tests/nav_benchmark/datasets/
+- `tests/nav_benchmark/datasets/__init__.py`
+- `tests/nav_benchmark/datasets/test_mvsec.py`
