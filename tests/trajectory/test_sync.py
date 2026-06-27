@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from nav_benchmark.trajectory.sync import synchronize_nearest_neighbor
 
@@ -61,3 +62,31 @@ def test_synchronize_nearest_neighbor_empty():
     assert diag.matched_count == 0
     assert diag.unmatched_source_count == 0
     assert diag.unmatched_target_count == 2
+
+
+def test_synchronize_nearest_neighbor_invalid_tolerance():
+    source_ts = np.array([1.0, 2.0])
+    target_ts = np.array([1.0, 2.0])
+    with pytest.raises(ValueError, match="tolerance_sec must be non-negative"):
+        synchronize_nearest_neighbor(source_ts, target_ts, tolerance_sec=-0.1)
+
+
+def test_synchronize_nearest_neighbor_non_monotonic_source():
+    source_ts = np.array([2.0, 1.0])
+    target_ts = np.array([1.0, 2.0])
+    with pytest.raises(ValueError, match="source_timestamps must be strictly monotonically increasing"):
+        synchronize_nearest_neighbor(source_ts, target_ts, tolerance_sec=0.1)
+
+
+def test_synchronize_nearest_neighbor_non_monotonic_target():
+    source_ts = np.array([1.0, 2.0])
+    target_ts = np.array([2.0, 1.0])
+    with pytest.raises(ValueError, match="target_timestamps must be strictly monotonically increasing"):
+        synchronize_nearest_neighbor(source_ts, target_ts, tolerance_sec=0.1)
+
+
+def test_synchronize_nearest_neighbor_duplicate_timestamps_not_strictly_monotonic():
+    source_ts = np.array([1.0, 1.0, 2.0])
+    target_ts = np.array([1.0, 2.0])
+    with pytest.raises(ValueError, match="source_timestamps must be strictly monotonically increasing"):
+        synchronize_nearest_neighbor(source_ts, target_ts, tolerance_sec=0.1)

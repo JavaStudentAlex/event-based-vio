@@ -21,6 +21,13 @@ def synchronize_nearest_neighbor(
         matched_target_indices: Indices of matched target timestamps.
         diagnostics: SyncDiagnostics object.
     """
+    if tolerance_sec < 0:
+        raise ValueError("tolerance_sec must be non-negative")
+    if len(source_timestamps) > 1 and not np.all(np.diff(source_timestamps) > 0):
+        raise ValueError("source_timestamps must be strictly monotonically increasing")
+    if len(target_timestamps) > 1 and not np.all(np.diff(target_timestamps) > 0):
+        raise ValueError("target_timestamps must be strictly monotonically increasing")
+
     if len(source_timestamps) == 0 or len(target_timestamps) == 0:
         return (
             np.empty(0, dtype=np.int64),
