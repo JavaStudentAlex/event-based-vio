@@ -1,7 +1,7 @@
 # GSD State
 
 **Active Milestone:** M001-ncx5an: MVSEC Pipeline and IMU Sanity Benchmark
-**Active Slice:** S01: MVSEC Loader and Stream Contract
+**Active Slice:** S02: Synchronization and Trajectory Export Contract
 **Phase:** planning
 **Requirements Status:** 0 active · 0 validated · 0 deferred · 0 out of scope
 
@@ -21,4 +21,4 @@
 - None
 
 ## Next Action
-Slice S01 has no DB tasks. Plan slice tasks before execution.
+Slice S02 has no DB tasks. Plan slice tasks before execution.

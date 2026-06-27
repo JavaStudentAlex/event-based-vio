@@ -13,7 +13,7 @@
 
 ## Slices
 
-- [ ] **S01: MVSEC Loader and Stream Contract** `risk:high` `depends:[]`
+- [x] **S01: MVSEC Loader and Stream Contract** `risk:high` `depends:[]`
   > After this: A tiny synthetic MVSEC-like fixture and a documented real MVSEC path can be loaded into a common sequence object with events, IMU, calibration, ground truth, and timestamp metadata.
 
 - [ ] **S02: Synchronization and Trajectory Export Contract** `risk:high` `depends:[S01]`

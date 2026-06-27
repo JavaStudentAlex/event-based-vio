@@ -1,14 +1,13 @@
 # Codebase Map
 
-Generated: 2026-06-27T15:24:33Z | Files: 41 | Described: 0/41
-<!-- gsd:codebase-meta {"generatedAt":"2026-06-27T15:24:33Z","fingerprint":"af54c476c4dd1a98aadc25e0b2e6275bdf276b23","fileCount":41,"truncated":false} -->
+Generated: 2026-06-27T19:14:20Z | Files: 49 | Described: 0/49
+<!-- gsd:codebase-meta {"generatedAt":"2026-06-27T19:14:20Z","fingerprint":"20dced4422f743889c3d5c561e4360a0612e8e55","fileCount":49,"truncated":false} -->
 
 ### (root)/
 - `.gitignore`
 - `.pre-commit-config.yaml`
 - `.python-version`
 - `AGENTS.md`
-- `gsd_mvsec_ensemble_plan.md`
 - `pyproject.toml`
 - `README.md`
 - `skills-lock.json`
@@ -63,5 +62,28 @@ Generated: 2026-06-27T15:24:33Z | Files: 41 | Described: 0/41
 - `.github/workflows/jules_auto_merge.yml`
 - `.github/workflows/jules_next_task.yml`
 
+### docs/datasets/
+- `docs/datasets/mvsec.md`
+
+### examples/
+- `examples/inspect_mvsec.py`
+
 ### scripts/
 - `scripts/download_mvsec.sh`
+
+### src/nav_benchmark/
+- `src/nav_benchmark/__init__.py`
+
+### src/nav_benchmark/datasets/
+- `src/nav_benchmark/datasets/__init__.py`
+- `src/nav_benchmark/datasets/mvsec.py`
+
+### tests/
+- `tests/__init__.py`
+
+### tests/nav_benchmark/
+- `tests/nav_benchmark/__init__.py`
+
+### tests/nav_benchmark/datasets/
+- `tests/nav_benchmark/datasets/__init__.py`
+- `tests/nav_benchmark/datasets/test_mvsec.py`

@@ -1,0 +1,52 @@
+# S01: MVSEC Loader and Stream Contract
+
+**Goal:** Establish and verify the MVSEC HDF5 loader and stream contract with a common MvsecSequence dataclass, per‑stream diagnostics, timestamp validation, and calibration attachment, plus documentation of the path table and a tiny example CLI.
+**Demo:** A tiny synthetic MVSEC-like fixture and a documented real MVSEC path can be loaded into a common sequence object with events, IMU, calibration, ground truth, and timestamp metadata.
+
+## Must-Haves
+
+- Dataset loader tests pass locally: ruff lint/format checks succeed and pytest for tests/nav_benchmark/datasets/test_mvsec.py reports all passing.
+- A docs/datasets/mvsec.md document exists that lists the hardcoded MVSEC HDF5 group paths, structured dtypes for events/IMU/poses, timestamp validation rules, calibration fields, and the MvsecSequence/metadata/diagnostics shapes. It also notes typical real MVSEC sequence locations for manual runs.
+- A tiny example CLI at examples/inspect_mvsec.py exists that loads an HDF5 file and prints metadata, enabling quick sanity checks outside of tests.
+
+## Proof Level
+
+- This slice proves: contract
+
+## Integration Closure
+
+Upstream surfaces consumed: none (first slice). New wiring introduced: documentation and an example script only — loader remains a pure module. What remains before end-to-end use: S02 synchronization and export, S03 IMU-only backend, S04 evaluation and plots, S05 manifest/failure artifacts and CI smoke.
+
+## Verification
+
+- Run the task and slice verification checks for this slice.
+
+## Tasks
+
+- [x] **T01: Verified MVSEC dataset loader and ran code style and formatting checks.** `est:30m`
+  Why: Prove the existing MVSEC loader and tests uphold the slice contract so downstream slices can trust the sequence object and diagnostics.
+  Do: Use uv via rtk to run ruff lint/format checks and execute the dataset loader tests. Tests cover events, IMU, images, ground truth, calibration, timestamp monotonicity, and layout mismatch diagnostics.
+  Done-when: All commands exit 0 and tests pass without xfail/skip for required behaviors.
+  - Files: `src/nav_benchmark/datasets/mvsec.py`, `tests/nav_benchmark/datasets/test_mvsec.py`
+  - Verify: rtk uv run --only-dev ruff check . && rtk uv run --only-dev ruff format --check . && rtk uv run pytest tests/nav_benchmark/datasets/test_mvsec.py -q
+
+- [x] **T02: Created MVSEC loader contract documentation** `est:30m`
+  Why: Document the loader contract and real MVSEC path table so users can point to a dataset and understand what is loaded and validated.
+  Do: Create docs/datasets/mvsec.md describing the hardcoded HDF5 groups, structured dtypes for events/IMU/poses, timestamp monotonicity guarantees, calibration fields, diagnostics semantics, and the MvsecSequence/metadata shapes. Include a brief note on typical MVSEC sequence paths (e.g., outdoor_day1) without bundling data.
+  Done-when: The doc exists, is non-empty, and includes the path table and dtype sections.
+  - Files: `docs/datasets/mvsec.md`
+  - Verify: test -s docs/datasets/mvsec.md
+
+- [x] **T03: Added inspect_mvsec.py example CLI, test cases, and verified metadata output structure** `est:20m`
+  Why: Provide a minimal, deterministic example that exercises the loader and prints sequence metadata for quick sanity checks without needing full synchronization.
+  Do: Add examples/inspect_mvsec.py that accepts --h5 <path> and prints stream sample counts and time ranges, plus whether calibration fields are present, using load_mvsec_sequence.
+  Done-when: The script exists and is non-empty. (Running it against real data is manual, not part of CI.)
+  - Files: `examples/inspect_mvsec.py`
+  - Verify: test -s examples/inspect_mvsec.py
+
+## Files Likely Touched
+
+- src/nav_benchmark/datasets/mvsec.py
+- tests/nav_benchmark/datasets/test_mvsec.py
+- docs/datasets/mvsec.md
+- examples/inspect_mvsec.py
