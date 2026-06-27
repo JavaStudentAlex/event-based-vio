@@ -4,7 +4,7 @@ estimated_files: 1
 skills_used: []
 ---
 
-# T03: Add example CLI: inspect MVSEC file metadata
+# T03: Added inspect_mvsec.py example CLI, test cases, and verified metadata output structure
 
 Why: Provide a minimal, deterministic example that exercises the loader and prints sequence metadata for quick sanity checks without needing full synchronization.
 Do: Add examples/inspect_mvsec.py that accepts --h5 <path> and prints stream sample counts and time ranges, plus whether calibration fields are present, using load_mvsec_sequence.

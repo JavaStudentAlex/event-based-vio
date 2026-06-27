@@ -4,7 +4,7 @@ estimated_files: 1
 skills_used: []
 ---
 
-# T02: Write MVSEC loader contract doc (paths, dtypes, timestamp rules)
+# T02: Created MVSEC loader contract documentation
 
 Why: Document the loader contract and real MVSEC path table so users can point to a dataset and understand what is loaded and validated.
 Do: Create docs/datasets/mvsec.md describing the hardcoded HDF5 groups, structured dtypes for events/IMU/poses, timestamp monotonicity guarantees, calibration fields, diagnostics semantics, and the MvsecSequence/metadata shapes. Include a brief note on typical MVSEC sequence paths (e.g., outdoor_day1) without bundling data.

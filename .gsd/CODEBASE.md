@@ -1,7 +1,7 @@
 # Codebase Map
 
-Generated: 2026-06-27T18:12:27Z | Files: 47 | Described: 0/47
-<!-- gsd:codebase-meta {"generatedAt":"2026-06-27T18:12:27Z","fingerprint":"9757035e7a148ad1b0722fe635cda63e47cfa91f","fileCount":47,"truncated":false} -->
+Generated: 2026-06-27T19:14:20Z | Files: 49 | Described: 0/49
+<!-- gsd:codebase-meta {"generatedAt":"2026-06-27T19:14:20Z","fingerprint":"20dced4422f743889c3d5c561e4360a0612e8e55","fileCount":49,"truncated":false} -->
 
 ### (root)/
 - `.gitignore`
@@ -61,6 +61,12 @@ Generated: 2026-06-27T18:12:27Z | Files: 47 | Described: 0/47
 - `.github/workflows/ci-tests.yml`
 - `.github/workflows/jules_auto_merge.yml`
 - `.github/workflows/jules_next_task.yml`
+
+### docs/datasets/
+- `docs/datasets/mvsec.md`
+
+### examples/
+- `examples/inspect_mvsec.py`
 
 ### scripts/
 - `scripts/download_mvsec.sh`

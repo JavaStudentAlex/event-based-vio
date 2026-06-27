@@ -11,7 +11,62 @@ src_path = project_root / "src"
 if src_path.is_dir() and str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from nav_benchmark.datasets.mvsec import load_mvsec_sequence  # noqa: E402
+from nav_benchmark.datasets.mvsec import (  # noqa: E402
+    Calibration,
+    LoadDiagnostics,
+    SequenceMetadata,
+    load_mvsec_sequence,
+)
+
+
+def _print_metadata(meta: SequenceMetadata) -> None:
+    print("\n--- Sequence Metadata ---")
+    print(f"Sequence Name: {meta.sequence_name}")
+    print(f"Source Path:   {meta.source_path}")
+
+
+def _print_streams(meta: SequenceMetadata) -> None:
+    print("\n--- Sample Counts & Time Ranges ---")
+    streams = set(meta.sample_counts.keys()).union(meta.time_ranges.keys())
+    if not streams:
+        print("No valid streams loaded.")
+        return
+    for stream in sorted(streams):
+        count = meta.sample_counts.get(stream, 0)
+        t_range = meta.time_ranges.get(stream, (0.0, 0.0))
+        duration = t_range[1] - t_range[0]
+        print(
+            f"  {stream:12s} : {count:8d} samples | t = [{t_range[0]:.4f} to {t_range[1]:.4f}] (duration: {duration:.2f}s)"
+        )
+
+
+def _print_calibration(calib: Calibration) -> None:
+    print("\n--- Calibration Availability ---")
+    items = (
+        ("Intrinsics (K):", calib.intrinsics_available),
+        ("Distortion (D):", calib.distortion_available),
+        ("Extrinsics (P):", calib.extrinsics_available),
+        ("IMU-to-Camera Transform:", calib.imu_cam_transform_available),
+    )
+    for label, available in items:
+        status = "[OK]" if available else "[N/A]"
+        print(f"  {label:27s} {status}")
+
+
+def _print_stream_list(label: str, items: list[str]) -> None:
+    joined = ", ".join(items) if items else "None"
+    print(f"  {label}: {joined}")
+
+
+def _print_diagnostics(diag: LoadDiagnostics) -> None:
+    print("\n--- Load Diagnostics ---")
+    print(f"  Layout Mismatch: {diag.layout_mismatch}")
+    _print_stream_list("Missing Streams", diag.missing_streams)
+    _print_stream_list("Malformed Streams", diag.malformed_streams)
+    if diag.layout_errors:
+        print("  Layout Errors/Warnings:")
+        for err in diag.layout_errors:
+            print(f"    - {err}")
 
 
 def main() -> None:
@@ -36,49 +91,10 @@ def main() -> None:
         print(f"Error loading sequence: {e}", file=sys.stderr)
         sys.exit(1)
 
-    meta = seq.metadata
-    diag = seq.diagnostics
-    calib = seq.calibration
-
-    print("\n--- Sequence Metadata ---")
-    print(f"Sequence Name: {meta.sequence_name}")
-    print(f"Source Path:   {meta.source_path}")
-
-    print("\n--- Sample Counts & Time Ranges ---")
-    streams = set(meta.sample_counts.keys()).union(meta.time_ranges.keys())
-    if not streams:
-        print("No valid streams loaded.")
-    else:
-        for stream in sorted(streams):
-            count = meta.sample_counts.get(stream, 0)
-            t_range = meta.time_ranges.get(stream, (0.0, 0.0))
-            duration = t_range[1] - t_range[0]
-            print(
-                f"  {stream:12s} : {count:8d} samples | t = [{t_range[0]:.4f} to {t_range[1]:.4f}] (duration: {duration:.2f}s)"
-            )
-
-    print("\n--- Calibration Availability ---")
-    print(f"  Intrinsics (K):             {'[OK]' if calib.intrinsics_available else '[N/A]'}")
-    print(f"  Distortion (D):             {'[OK]' if calib.distortion_available else '[N/A]'}")
-    print(f"  Extrinsics (P):             {'[OK]' if calib.extrinsics_available else '[N/A]'}")
-    print(f"  IMU-to-Camera Transform:    {'[OK]' if calib.imu_cam_transform_available else '[N/A]'}")
-
-    print("\n--- Load Diagnostics ---")
-    print(f"  Layout Mismatch: {diag.layout_mismatch}")
-    if diag.missing_streams:
-        print(f"  Missing Streams: {', '.join(diag.missing_streams)}")
-    else:
-        print("  Missing Streams: None")
-
-    if diag.malformed_streams:
-        print(f"  Malformed Streams: {', '.join(diag.malformed_streams)}")
-    else:
-        print("  Malformed Streams: None")
-
-    if diag.layout_errors:
-        print("  Layout Errors/Warnings:")
-        for err in diag.layout_errors:
-            print(f"    - {err}")
+    _print_metadata(seq.metadata)
+    _print_streams(seq.metadata)
+    _print_calibration(seq.calibration)
+    _print_diagnostics(seq.diagnostics)
 
 
 if __name__ == "__main__":
