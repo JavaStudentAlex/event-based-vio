@@ -1,0 +1,127 @@
+default_stages: [manual]
+exclude: '^(\.github/|\.skillss/|\.skills/|\.agents/|\.gsd/(?!.*\.html$)|skills/|mutants/|\.venv/)'
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        types: [python]
+      - id: end-of-file-fixer
+        types: [python]
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        types: [python]
+      - id: check-merge-conflict
+        types: [python]
+      - id: debug-statements
+        types: [python]
+
+  - repo: local
+    hooks:
+      - id: ruff
+        name: Ruff
+        entry: bash -c 'uv run --only-dev ruff check .'
+        language: system
+        stages: [manual]
+        pass_filenames: false
+        always_run: true
+
+      - id: ruff-format
+        name: Ruff format check
+        entry: bash -c 'uv run --only-dev ruff format --check .'
+        language: system
+        stages: [manual]
+        pass_filenames: false
+        always_run: true
+
+      - id: mypy
+        name: Mypy
+        entry: >-
+          bash -c 'mapfile -t py_files < <(git ls-files "*.py" | grep -Ev
+          "(^|/)(\.agents|\.codex|\.github|\.gsd|\.skills|skills|mutants|tests)/|(^|/)test_[^/]*\.py$|_test\.py$" || true);
+          if [ "${#py_files[@]}" -eq 0 ]; then echo "No production Python files found; skipping mypy."; exit 0; fi;
+          uv run --only-dev mypy "${py_files[@]}"'
+        language: system
+        stages: [manual]
+        pass_filenames: false
+        always_run: true
+
+      - id: bandit
+        name: Bandit
+        entry: bash -c 'uv run --only-dev bandit -q -r -c pyproject.toml .'
+        language: system
+        stages: [manual]
+        pass_filenames: false
+        always_run: true
+
+      - id: uv-audit
+        name: uv audit
+        entry: bash -c 'uv audit --preview-features audit'
+        language: system
+        stages: [manual]
+        pass_filenames: false
+        always_run: true
+
+      - id: py-compile
+        name: py_compile
+        entry: >-
+          bash -c 'mapfile -t py_files < <(git ls-files "*.py" "**/*.py" | sort -u);
+          if [ "${#py_files[@]}" -eq 0 ]; then echo "No Python files found; skipping py_compile."; exit 0; fi;
+          uv run python -m py_compile "${py_files[@]}"'
+        language: system
+        stages: [manual]
+        pass_filenames: false
+        always_run: true
+
+      - id: aps-gherkin-parse
+        name: APS/Gherkin parse and IR DRY
+        entry: bash .github/scripts/precommit_aps_gate.sh
+        language: system
+        stages: [manual]
+        pass_filenames: false
+        always_run: true
+
+      - id: normal-tests
+        name: Normal tests with coverage
+        entry: bash .github/scripts/precommit_coverage_gate.sh
+        language: system
+        stages: [manual]
+        pass_filenames: false
+        always_run: true
+
+      - id: crap-cleaner
+        name: CRAP risk hardening check
+        entry: uv run python .github/scripts/crap_check.py --coverage-json build/slow-lane/coverage.json --max-score 6
+        language: system
+        stages: [manual]
+        types: [python]
+        exclude: ^tests/
+        require_serial: true
+
+      - id: dry-cleaner
+        name: DRY structural hardening check
+        entry: uv run python .github/scripts/dry_check.py --min-lines 8 --max-groups 0
+        language: system
+        stages: [manual]
+        types: [python]
+        exclude: ^tests/
+        require_serial: true
+
+      - id: language-mutation
+        name: Language mutation
+        entry: uv run python .github/scripts/precommit_language_mutation_gate.py
+        language: system
+        stages: [manual]
+        types: [python]
+        exclude: ^tests/
+        require_serial: true
+
+      - id: gherkin-mutation
+        name: Soft Gherkin mutation
+        entry: bash .github/scripts/precommit_gherkin_mutation_gate.sh
+        language: system
+        stages: [manual]
+        pass_filenames: false
+        always_run: true

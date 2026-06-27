@@ -1,0 +1,123 @@
+[project]
+name = "event-based-vio"
+version = "0.1.0"
+description = "MVSEC-based event-camera visual-inertial odometry benchmark and ensemble pipeline"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "evo>=1.36.5",
+    "h5py>=3.16.0",
+    "matplotlib>=3.11.0",
+    "numpy>=2.5.0",
+    "opencv-python>=4.13.0.92",
+    "pandas>=3.0.3",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
+    "rosbags>=0.11.3",
+    "scikit-learn>=1.9.0",
+    "scipy>=1.18.0",
+    "tqdm>=4.68.3",
+]
+
+[dependency-groups]
+dev = [
+    "bandit>=1.9.4",
+    "behave>=1.3.3",
+    "coverage>=7.14.3",
+    "jupyterhub>=5.5.0",
+    "jupyterlab>=4.6.0",
+    "mutmut>=3.6.0",
+    "mypy>=2.1.0",
+    "notebook>=7.6.0",
+    "pre-commit>=4.6.0",
+    "pytest>=9.1.1",
+    "ruff>=0.15.18",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+exclude = [
+    ".agents",
+    ".github",
+    ".gsd",
+    ".skills",
+    "skills",
+    "mutants"
+]
+
+[tool.ruff.lint]
+# Enable isort (I), flake8 (E, F, B), simplify (SIM), pyupgrade (UP), and ruff-specific (RUF) checks
+select = ["E", "F", "I", "C901", "B", "SIM", "UP", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "."
+]
+addopts = "--ignore=mutants"
+
+[tool.coverage.run]
+data_file = "build/slow-lane/.coverage"
+branch = true
+parallel = true
+relative_files = true
+source = ["."]
+patch = ["subprocess"]
+omit = [
+  ".agents/*",
+  ".codex/*",
+  ".github/*",
+  ".gsd/*",
+  ".skills/*",
+  "skills/*",
+  "tests/*",
+]
+
+[tool.mutmut]
+source_paths = [
+  ".",
+]
+do_not_mutate = [
+  "tests/*",
+  "./tests/*",
+  ".github/*",
+  "./.github/*",
+  ".agents/*",
+  "./.agents/*",
+  ".codex/*",
+  "./.codex/*",
+  ".gsd/*",
+  "./.gsd/*",
+  ".skills/*",
+  "./.skills/*",
+  ".venv/*",
+  "./.venv/*",
+  "skills/*",
+  "./skills/*",
+  "mutants/*",
+  "./mutants/*",
+]
+pytest_add_cli_args_test_selection = ["tests"]
+
+[tool.mypy]
+python_version = "3.13"
+exclude = [
+    '^\.agents/',
+    '^\.codex/',
+    '^\.github/',
+    '^\.gsd/',
+    '^\.skills/',
+    '^skills/',
+    '^mutants/',
+    '^tests/'
+]
+
+[tool.bandit]
+exclude_dirs = [".agents", ".codex", ".github", ".gsd", ".skills", "skills", "mutants", ".venv", "tests"]

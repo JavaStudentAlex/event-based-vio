@@ -1,0 +1,66 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.idea/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+mutants/
+.bg-shell/
+# GSD project artifacts are tracked. Keep local/session/runtime/telemetry artifacts out of Git.
+.gsd/**
+!.gsd/
+!.gsd/**/
+!.gsd/*.md
+!.gsd/**/*.md
+
+# Large audio files
+data/
+
+# ── GSD baseline (auto-generated) ──
+.gsd-id
+.mcp.json
+Thumbs.db
+nul
+nul.*
+con
+con.*
+prn
+prn.*
+aux
+aux.*
+com[1-9]
+com[1-9].*
+lpt[1-9]
+lpt[1-9].*
+*.swp
+*.swo
+*~
+.vscode/
+*.code-workspace
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+dist/
+build/
+target/
+vendor/
+*.log
+coverage/
+.cache/
+tmp/
+
+# Outputs
+plots/
+mutants
+dummy_output
+.codex
+
+# ── GSD baseline (auto-generated) ──
+.gsd-worktrees/
+.mypy_cache
