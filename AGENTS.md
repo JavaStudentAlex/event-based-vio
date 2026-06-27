@@ -137,8 +137,10 @@ and reproducible.
   IMU-only.
 - Use the same sequence, time range, alignment policy, and metrics for every
   method in a comparison.
-- Track at least ATE, RPE, drift every 20 m, total drift, tracking failures,
-  invalid-pose intervals, latency, and odometry frequency.
+- Track the following required metrics:
+  - **Core Trajectory:** ATE, RPE, drift every 20 m, and total drift.
+  - **Robustness:** tracking failure rate, invalid-pose intervals, and outlier rate.
+  - **Runtime:** latency per update (ms) and odometry frequency.
 - Treat missing/invalid poses as benchmark data, not as rows to silently drop.
 - Store result metadata with dataset name, sequence, method, commit SHA when
   available, command, and relevant configuration.
