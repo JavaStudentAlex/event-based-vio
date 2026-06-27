@@ -181,3 +181,38 @@ def test_missing_images_and_poses(tmp_path: Path):
     seq = load_mvsec_sequence(h5_path)
     assert seq.images is None
     assert seq.gt_poses is None
+
+
+def test_inspect_mvsec_cli_success(synthetic_mvsec_h5: Path, capsys):
+    import sys
+    from unittest.mock import patch
+
+    from examples.inspect_mvsec import main
+
+    test_args = ["inspect_mvsec.py", "--h5", str(synthetic_mvsec_h5)]
+    with patch.object(sys, "argv", test_args):
+        main()
+
+    captured = capsys.readouterr()
+    assert "Sequence Metadata" in captured.out
+    assert "synthetic_mvsec" in captured.out
+    assert "events" in captured.out
+    assert "imu" in captured.out
+    assert "gt_poses" in captured.out
+    assert "images" in captured.out
+    assert "Calibration Availability" in captured.out
+    assert "Load Diagnostics" in captured.out
+
+
+def test_inspect_mvsec_cli_missing_file(tmp_path: Path):
+    import sys
+    from unittest.mock import patch
+
+    from examples.inspect_mvsec import main
+
+    non_existent = tmp_path / "does_not_exist.h5"
+    test_args = ["inspect_mvsec.py", "--h5", str(non_existent)]
+    with patch.object(sys, "argv", test_args):
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
