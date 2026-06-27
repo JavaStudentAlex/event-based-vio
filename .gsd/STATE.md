@@ -22,3 +22,6 @@
 
 ## Next Action
 Slice S01 has no DB tasks. Plan slice tasks before execution.
+
+## Implementation Notes
+- **S01**: Added core MVSEC stream dataclasses and structured numpy arrays matching `EVENT_DTYPE`, `IMU_DTYPE`, and `POSE_DTYPE`. Implemented HDF5 `load_mvsec_sequence` using hardcoded paths (`/davis/left/*`). Added `LoadDiagnostics` generation for missing, malformed, and misaligned layouts with duplicate/non-monotonic timestamp validation. Added unit test fixture generator producing schema-compliant synthetic `synthetic_mvsec.h5` and validating loaders behaviour. Added `src` directory to `PYTHONPATH` via pyproject.toml to ensure imports resolve smoothly during tests.
