@@ -1,7 +1,7 @@
 # Codebase Map
 
-Generated: 2026-06-27T14:57:00Z | Files: 40 | Described: 0/40
-<!-- gsd:codebase-meta {"generatedAt":"2026-06-27T14:57:00Z","fingerprint":"597101c0057113f8d8eea75d3d079b520c93340c","fileCount":40,"truncated":false} -->
+Generated: 2026-06-27T15:24:33Z | Files: 41 | Described: 0/41
+<!-- gsd:codebase-meta {"generatedAt":"2026-06-27T15:24:33Z","fingerprint":"af54c476c4dd1a98aadc25e0b2e6275bdf276b23","fileCount":41,"truncated":false} -->
 
 ### (root)/
 - `.gitignore`
@@ -11,6 +11,7 @@ Generated: 2026-06-27T14:57:00Z | Files: 40 | Described: 0/40
 - `gsd_mvsec_ensemble_plan.md`
 - `pyproject.toml`
 - `README.md`
+- `skills-lock.json`
 
 ### .github/
 - `.github/PULL_REQUEST_TEMPLATE.md`
