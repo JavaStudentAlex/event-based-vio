@@ -51,3 +51,17 @@ ROS stack.
 
 Raw datasets, extracted MVSEC files, generated trajectories, plots, local
 caches, and virtual environments should stay untracked.
+
+## Dataset Download
+
+The main benchmark uses the MVSEC dataset. A helper script is provided to download the dataset's ROS `.bag` files directly from UPenn's servers into the `data/` directory. 
+
+To download the sequences (`indoor_flying1` for debugging or `outdoor_day1` for the main benchmark), you can run:
+
+```bash
+./scripts/download_mvsec.sh
+```
+
+*(Note: `outdoor_day1` is ~19.2GB, and `indoor_flying1` is ~3.8GB. You can edit the script to download only the sequences you need right now.)*
+
+Once downloaded, the dataset will be parsed using the `rosbags` and `h5py` Python libraries (included in `pyproject.toml`), allowing a completely "ROS-free" workflow natively in Python.
