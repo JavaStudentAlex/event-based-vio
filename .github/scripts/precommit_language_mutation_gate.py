@@ -42,6 +42,7 @@ ALSO_COPY = [
     Path("pyproject.toml"),
     Path("README.md"),
     Path("src"),
+    Path("examples"),
 ]
 
 
