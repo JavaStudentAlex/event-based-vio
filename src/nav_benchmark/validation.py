@@ -14,6 +14,72 @@ class ValidationResult:
     message: str
 
 
+def _check_float_val(val: str, row_num: int, label: str, optional: bool = False) -> str | None:
+    if optional and val == "":
+        return None
+    try:
+        if not np.isfinite(float(val)):
+            return f"Row {row_num} {label} is non-finite"
+    except ValueError:
+        return f"Row {row_num} {label} '{val}' is not a float"
+    return None
+
+
+def _check_trajectory_header(header: list[str]) -> str | None:
+    expected_cols = [
+        "timestamp",
+        "method",
+        "x",
+        "y",
+        "z",
+        "qx",
+        "qy",
+        "qz",
+        "qw",
+        "vx",
+        "vy",
+        "vz",
+        "confidence",
+        "health",
+        "latency_ms",
+    ]
+    if len(header) < 15:
+        return f"Header has fewer than 15 columns: {len(header)}"
+    if header[:15] != expected_cols:
+        return f"Header mismatch. Expected first 15 columns to be {expected_cols}, got {header[:15]}"
+    return None
+
+
+def _validate_trajectory_row(row: list[str], row_num: int) -> str | None:
+    if len(row) < 15:
+        return f"Row {row_num} has length {len(row)} < 15"
+
+    checks = [
+        (0, "timestamp", False),
+        (2, "position col 2", False),
+        (3, "position col 3", False),
+        (4, "position col 4", False),
+        (5, "orientation col 5", False),
+        (6, "orientation col 6", False),
+        (7, "orientation col 7", False),
+        (8, "orientation col 8", False),
+        (9, "velocity col 9", True),
+        (10, "velocity col 10", True),
+        (11, "velocity col 11", True),
+        (12, "confidence", True),
+    ]
+
+    for col, label, optional in checks:
+        err = _check_float_val(row[col], row_num, label, optional)
+        if err:
+            return err
+
+    if row[13] not in ("OK", "DEGRADED", "LOST", "INVALID", ""):
+        return f"Row {row_num} health '{row[13]}' is invalid"
+
+    return _check_float_val(row[14], row_num, "latency_ms", optional=True)
+
+
 def check_trajectory_csv(path: str | Path) -> ValidationResult:
     path = Path(path)
     if not path.exists():
@@ -27,86 +93,18 @@ def check_trajectory_csv(path: str | Path) -> ValidationResult:
             except StopIteration:
                 return ValidationResult("check_trajectory_csv", False, "File is empty")
 
-            expected_cols = [
-                "timestamp", "method", "x", "y", "z",
-                "qx", "qy", "qz", "qw",
-                "vx", "vy", "vz",
-                "confidence", "health", "latency_ms"
-            ]
-            if len(header) < 15:
-                return ValidationResult("check_trajectory_csv", False, f"Header has fewer than 15 columns: {len(header)}")
-            if header[:15] != expected_cols:
-                return ValidationResult("check_trajectory_csv", False, f"Header mismatch. Expected first 15 columns to be {expected_cols}, got {header[:15]}")
+            err = _check_trajectory_header(header)
+            if err:
+                return ValidationResult("check_trajectory_csv", False, err)
 
             rows_count = 0
             for idx, row in enumerate(reader):
                 if not row:
                     continue
                 rows_count += 1
-                if len(row) < 15:
-                    return ValidationResult("check_trajectory_csv", False, f"Row {idx+2} has length {len(row)} < 15")
-
-                # Parse and verify columns
-                try:
-                    ts = float(row[0])
-                    if not np.isfinite(ts):
-                        return ValidationResult("check_trajectory_csv", False, f"Row {idx+2} timestamp is non-finite")
-                except ValueError:
-                    return ValidationResult("check_trajectory_csv", False, f"Row {idx+2} timestamp '{row[0]}' is not a float")
-
-                # Positions
-                for c in [2, 3, 4]:
-                    try:
-                        val = float(row[c])
-                        if not np.isfinite(val):
-                            return ValidationResult("check_trajectory_csv", False, f"Row {idx+2} position col {c} is non-finite")
-                    except ValueError:
-                        return ValidationResult("check_trajectory_csv", False, f"Row {idx+2} position col {c} '{row[c]}' is not a float")
-
-                # Orientations
-                for c in [5, 6, 7, 8]:
-                    try:
-                        val = float(row[c])
-                        if not np.isfinite(val):
-                            return ValidationResult("check_trajectory_csv", False, f"Row {idx+2} orientation col {c} is non-finite")
-                    except ValueError:
-                        return ValidationResult("check_trajectory_csv", False, f"Row {idx+2} orientation col {c} '{row[c]}' is not a float")
-
-                # Velocities
-                for c in [9, 10, 11]:
-                    val = row[c]
-                    if val != "":
-                        try:
-                            fval = float(val)
-                            if not np.isfinite(fval):
-                                return ValidationResult("check_trajectory_csv", False, f"Row {idx+2} velocity col {c} is non-finite")
-                        except ValueError:
-                            return ValidationResult("check_trajectory_csv", False, f"Row {idx+2} velocity col {c} '{val}' is not a float")
-
-                # Confidence
-                val = row[12]
-                if val != "":
-                    try:
-                        fval = float(val)
-                        if not np.isfinite(fval):
-                            return ValidationResult("check_trajectory_csv", False, f"Row {idx+2} confidence is non-finite")
-                    except ValueError:
-                        return ValidationResult("check_trajectory_csv", False, f"Row {idx+2} confidence '{val}' is not a float")
-
-                # Health
-                health_val = row[13]
-                if health_val not in ["OK", "DEGRADED", "LOST", "INVALID", ""]:
-                    return ValidationResult("check_trajectory_csv", False, f"Row {idx+2} health '{health_val}' is invalid")
-
-                # Latency_ms
-                val = row[14]
-                if val != "":
-                    try:
-                        fval = float(val)
-                        if not np.isfinite(fval):
-                            return ValidationResult("check_trajectory_csv", False, f"Row {idx+2} latency_ms is non-finite")
-                    except ValueError:
-                        return ValidationResult("check_trajectory_csv", False, f"Row {idx+2} latency_ms '{val}' is not a float")
+                err = _validate_trajectory_row(row, idx + 2)
+                if err:
+                    return ValidationResult("check_trajectory_csv", False, err)
 
             if rows_count == 0:
                 return ValidationResult("check_trajectory_csv", False, "No data rows found")
@@ -116,13 +114,9 @@ def check_trajectory_csv(path: str | Path) -> ValidationResult:
         return ValidationResult("check_trajectory_csv", False, f"Failed to read CSV: {e}")
 
 
-def check_tum_file(path: str | Path) -> ValidationResult:
-    path = Path(path)
-    if not path.exists():
-        return ValidationResult("check_tum_file", False, f"TUM file does not exist: {path}")
-
+def _load_tum_lines(path: Path) -> tuple[list[list[float]], str | None]:
+    lines = []
     try:
-        lines = []
         with open(path, encoding="utf-8") as f:
             for idx, line in enumerate(f):
                 line = line.strip()
@@ -130,67 +124,87 @@ def check_tum_file(path: str | Path) -> ValidationResult:
                     continue
                 parts = line.split()
                 if len(parts) != 8:
-                    return ValidationResult("check_tum_file", False, f"Row {idx+1} does not have 8 elements: {line}")
+                    return [], f"Row {idx + 1} does not have 8 elements: {line}"
                 try:
                     vals = [float(x) for x in parts]
                 except ValueError as e:
-                    return ValidationResult("check_tum_file", False, f"Row {idx+1} has non-numeric elements: {e}")
+                    return [], f"Row {idx + 1} has non-numeric elements: {e}"
                 lines.append(vals)
     except Exception as e:
-        return ValidationResult("check_tum_file", False, f"Failed to read TUM file: {e}")
+        return [], f"Failed to read TUM file: {e}"
+    return lines, None
+
+
+def _get_companion_csv(path: Path) -> Path:
+    if path.name.endswith("_tum.txt"):
+        csv_name = path.name[:-8] + ".csv"
+        companion = path.parent / csv_name
+        if companion.exists():
+            return companion
+    return path.parent / "estimated_trajectory.csv"
+
+
+def _load_health_map(csv_path: Path) -> tuple[dict[float, str], str | None]:
+    health_map = {}
+    try:
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            header = next(reader)
+            if "timestamp" in header and "health" in header:
+                ts_idx = header.index("timestamp")
+                health_idx = header.index("health")
+                for row in reader:
+                    if not row:
+                        continue
+                    try:
+                        ts_val = float(row[ts_idx])
+                        health_map[ts_val] = row[health_idx]
+                    except (ValueError, IndexError):
+                        pass
+    except Exception as e:
+        return {}, f"Failed to read companion CSV for cross check: {e}"
+    return health_map, None
+
+
+def _cross_check_tum_health(lines: list[list[float]], health_map: dict[float, str]) -> str | None:
+    for idx, row in enumerate(lines):
+        ts = row[0]
+        best_match = None
+        min_diff = float("inf")
+        for csv_ts in health_map:
+            diff = abs(csv_ts - ts)
+            if diff < min_diff:
+                min_diff = diff
+                best_match = csv_ts
+
+        if min_diff < 1e-4 and best_match is not None:
+            h_val = health_map[best_match]
+            if h_val in ["LOST", "INVALID"]:
+                return f"TUM row {idx + 1} at timestamp {ts} matches pose with health '{h_val}' in CSV"
+    return None
+
+
+def check_tum_file(path: str | Path) -> ValidationResult:
+    path = Path(path)
+    if not path.exists():
+        return ValidationResult("check_tum_file", False, f"TUM file does not exist: {path}")
+
+    lines, err = _load_tum_lines(path)
+    if err:
+        return ValidationResult("check_tum_file", False, err)
 
     if not lines:
         return ValidationResult("check_tum_file", False, "TUM file is empty")
 
-    # Check companion CSV if it exists
-    companion_csv = None
-    if path.name.endswith("_tum.txt"):
-        csv_name = path.name[:-8] + ".csv"
-        companion_csv = path.parent / csv_name
-    if companion_csv is None or not companion_csv.exists():
-        companion_csv = path.parent / "estimated_trajectory.csv"
-
+    companion_csv = _get_companion_csv(path)
     if companion_csv.exists():
-        health_map = {}
-        try:
-            with open(companion_csv, newline="", encoding="utf-8") as f:
-                reader = csv.reader(f)
-                header = next(reader)
-                if "timestamp" in header and "health" in header:
-                    ts_idx = header.index("timestamp")
-                    health_idx = header.index("health")
-                    for row in reader:
-                        if not row:
-                            continue
-                        try:
-                            ts_val = float(row[ts_idx])
-                            h_val = row[health_idx]
-                            health_map[ts_val] = h_val
-                        except (ValueError, IndexError):
-                            pass
-        except Exception as e:
-            return ValidationResult("check_tum_file", False, f"Failed to read companion CSV for cross check: {e}")
+        health_map, err = _load_health_map(companion_csv)
+        if err:
+            return ValidationResult("check_tum_file", False, err)
 
-        # Verify no health == LOST or INVALID in matching timestamps
-        for idx, row in enumerate(lines):
-            ts = row[0]
-            # Find nearest timestamp within 1e-4 seconds
-            best_match = None
-            min_diff = float("inf")
-            for csv_ts in health_map:
-                diff = abs(csv_ts - ts)
-                if diff < min_diff:
-                    min_diff = diff
-                    best_match = csv_ts
-
-            if min_diff < 1e-4 and best_match is not None:
-                h_val = health_map[best_match]
-                if h_val in ["LOST", "INVALID"]:
-                    return ValidationResult(
-                        "check_tum_file",
-                        False,
-                        f"TUM row {idx+1} at timestamp {ts} matches pose with health '{h_val}' in CSV"
-                    )
+        err = _cross_check_tum_health(lines, health_map)
+        if err:
+            return ValidationResult("check_tum_file", False, err)
 
     return ValidationResult("check_tum_file", True, "TUM file format is valid")
 
@@ -205,9 +219,18 @@ def check_run_manifest(path: str | Path) -> ValidationResult:
             manifest = json.load(f)
 
         required_keys = [
-            "method", "dataset", "sequence", "config",
-            "timestamp_policy", "gravity", "frames", "units",
-            "alignment", "code_version", "status", "health_counts"
+            "method",
+            "dataset",
+            "sequence",
+            "config",
+            "timestamp_policy",
+            "gravity",
+            "frames",
+            "units",
+            "alignment",
+            "code_version",
+            "status",
+            "health_counts",
         ]
         for key in required_keys:
             if key not in manifest:
@@ -235,7 +258,9 @@ def check_failure_notes(path: str | Path) -> ValidationResult:
         if "## Health Summary" not in content:
             return ValidationResult("check_failure_notes", False, "Missing '## Health Summary' section")
         if "## Detected Degraded/Lost Intervals" not in content:
-            return ValidationResult("check_failure_notes", False, "Missing '## Detected Degraded/Lost Intervals' section")
+            return ValidationResult(
+                "check_failure_notes", False, "Missing '## Detected Degraded/Lost Intervals' section"
+            )
 
         # Try to find run_manifest.json to check if counts are zero
         manifest_path = path.parent / "run_manifest.json"
@@ -245,19 +270,42 @@ def check_failure_notes(path: str | Path) -> ValidationResult:
                     manifest = json.load(f)
                 hc = manifest.get("health_counts", {})
                 degraded_lost_invalid_sum = sum(hc.get(h, 0) for h in ["DEGRADED", "LOST", "INVALID"])
-                if degraded_lost_invalid_sum == 0:
-                    if "No degraded or lost intervals were detected." not in content:
-                        return ValidationResult(
-                            "check_failure_notes",
-                            False,
-                            "Expected 'No degraded or lost intervals were detected.' because health counts show no failures"
-                        )
+                if degraded_lost_invalid_sum == 0 and "No degraded or lost intervals were detected." not in content:
+                    return ValidationResult(
+                        "check_failure_notes",
+                        False,
+                        "Expected 'No degraded or lost intervals were detected.' because health counts show no failures",
+                    )
             except Exception:
                 pass
 
         return ValidationResult("check_failure_notes", True, "Failure notes file is valid")
     except Exception as e:
         return ValidationResult("check_failure_notes", False, f"Failed to read failure notes: {e}")
+
+
+def _validate_finite_scalar(val: Any) -> tuple[bool, str]:
+    if isinstance(val, str) and val.lower() in ["nan", "inf", "-inf", "infinity", "-infinity"]:
+        return False, f"Found non-finite string representation '{val}'"
+    if isinstance(val, float) and not np.isfinite(val):
+        return False, f"Found non-finite float '{val}'"
+    return True, ""
+
+
+def _validate_finite_value(val: Any) -> tuple[bool, str]:
+    if isinstance(val, dict):
+        for k, v in val.items():
+            ok, msg = _validate_finite_value(v)
+            if not ok:
+                return False, f"{k} -> {msg}"
+        return True, ""
+    if isinstance(val, list):
+        for idx, v in enumerate(val):
+            ok, msg = _validate_finite_value(v)
+            if not ok:
+                return False, f"[{idx}] -> {msg}"
+        return True, ""
+    return _validate_finite_scalar(val)
 
 
 def check_metrics_json(path: str | Path) -> ValidationResult:
@@ -269,33 +317,12 @@ def check_metrics_json(path: str | Path) -> ValidationResult:
         with open(path, encoding="utf-8") as f:
             metrics_data = json.load(f)
 
-        required_keys = [
-            "status", "config", "metrics", "alignment", "diagnostics", "coverage", "drift_bins"
-        ]
+        required_keys = ["status", "config", "metrics", "alignment", "diagnostics", "coverage", "drift_bins"]
         for key in required_keys:
             if key not in metrics_data:
                 return ValidationResult("check_metrics_json", False, f"Metrics missing key: '{key}'")
 
-        def check_val(val: Any) -> tuple[bool, str]:
-            if isinstance(val, str):
-                if val.lower() in ["nan", "inf", "-inf", "infinity", "-infinity"]:
-                    return False, f"Found non-finite string representation '{val}'"
-            elif isinstance(val, float):
-                if not np.isfinite(val):
-                    return False, f"Found non-finite float '{val}'"
-            elif isinstance(val, dict):
-                for k, v in val.items():
-                    ok, msg = check_val(v)
-                    if not ok:
-                        return False, f"{k} -> {msg}"
-            elif isinstance(val, list):
-                for idx, v in enumerate(val):
-                    ok, msg = check_val(v)
-                    if not ok:
-                        return False, f"[{idx}] -> {msg}"
-            return True, ""
-
-        ok, msg = check_val(metrics_data)
+        ok, msg = _validate_finite_value(metrics_data)
         if not ok:
             return ValidationResult("check_metrics_json", False, f"Non-finite value detected: {msg}")
 
@@ -318,16 +345,34 @@ def check_error_vs_time_csv(path: str | Path) -> ValidationResult:
                 return ValidationResult("check_error_vs_time_csv", False, "File is empty")
 
             expected_evt_header = [
-                "timestamp", "est_x", "est_y", "est_z",
-                "gt_aligned_x", "gt_aligned_y", "gt_aligned_z",
-                "error_x", "error_y", "error_z", "error_magnitude",
-                "health", "association_residual"
+                "timestamp",
+                "est_x",
+                "est_y",
+                "est_z",
+                "gt_aligned_x",
+                "gt_aligned_y",
+                "gt_aligned_z",
+                "error_x",
+                "error_y",
+                "error_z",
+                "error_magnitude",
+                "health",
+                "association_residual",
             ]
             expected_evt_header_alt = [
-                "timestamp", "est_x", "est_y", "est_z",
-                "gt_x", "gt_y", "gt_z",
-                "err_x", "err_y", "err_z", "error_magnitude",
-                "health", "assoc_residual_sec"
+                "timestamp",
+                "est_x",
+                "est_y",
+                "est_z",
+                "gt_x",
+                "gt_y",
+                "gt_z",
+                "err_x",
+                "err_y",
+                "err_z",
+                "error_magnitude",
+                "health",
+                "assoc_residual_sec",
             ]
             if header != expected_evt_header and header != expected_evt_header_alt:
                 return ValidationResult("check_error_vs_time_csv", False, f"Header mismatch. Got {header}")
@@ -338,7 +383,9 @@ def check_error_vs_time_csv(path: str | Path) -> ValidationResult:
                     continue
                 rows_count += 1
                 if len(row) < len(header):
-                    return ValidationResult("check_error_vs_time_csv", False, f"Row {rows_count+1} has length {len(row)} < {len(header)}")
+                    return ValidationResult(
+                        "check_error_vs_time_csv", False, f"Row {rows_count + 1} has length {len(row)} < {len(header)}"
+                    )
 
             if rows_count == 0:
                 return ValidationResult("check_error_vs_time_csv", False, "No data rows found")
@@ -362,12 +409,20 @@ def check_error_vs_distance_csv(path: str | Path) -> ValidationResult:
                 return ValidationResult("check_error_vs_distance_csv", False, "File is empty")
 
             expected_evd_header = [
-                "cumulative_distance", "error_magnitude", "health",
-                "association_residual", "bin_start", "bin_end"
+                "cumulative_distance",
+                "error_magnitude",
+                "health",
+                "association_residual",
+                "bin_start",
+                "bin_end",
             ]
             expected_evd_header_alt = [
-                "cumulative_distance", "error_magnitude", "health",
-                "assoc_residual_sec", "bin_start_m", "bin_end_m"
+                "cumulative_distance",
+                "error_magnitude",
+                "health",
+                "assoc_residual_sec",
+                "bin_start_m",
+                "bin_end_m",
             ]
             if header != expected_evd_header and header != expected_evd_header_alt:
                 return ValidationResult("check_error_vs_distance_csv", False, f"Header mismatch. Got {header}")
@@ -378,7 +433,11 @@ def check_error_vs_distance_csv(path: str | Path) -> ValidationResult:
                     continue
                 rows_count += 1
                 if len(row) < len(header):
-                    return ValidationResult("check_error_vs_distance_csv", False, f"Row {rows_count+1} has length {len(row)} < {len(header)}")
+                    return ValidationResult(
+                        "check_error_vs_distance_csv",
+                        False,
+                        f"Row {rows_count + 1} has length {len(row)} < {len(header)}",
+                    )
 
             if rows_count == 0:
                 return ValidationResult("check_error_vs_distance_csv", False, "No data rows found")
@@ -416,6 +475,89 @@ def check_run_log(path: str | Path) -> ValidationResult:
         return ValidationResult("check_run_log", False, f"Failed to check run.log: {e}")
 
 
+def _load_trajectory_health(path: Path) -> tuple[dict[str, int], int, str | None]:
+    health_counts = {"OK": 0, "DEGRADED": 0, "LOST": 0, "INVALID": 0}
+    total_rows = 0
+    try:
+        with open(path, newline="", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            header = next(reader)
+            if "health" not in header:
+                return {}, 0, "health column missing in trajectory CSV"
+            health_idx = header.index("health")
+            for row in reader:
+                if not row:
+                    continue
+                total_rows += 1
+                h_val = row[health_idx] or "OK"
+                health_counts[h_val] = health_counts.get(h_val, 0) + 1
+    except Exception as e:
+        return {}, 0, f"Failed to read trajectory CSV: {e}"
+    return health_counts, total_rows, None
+
+
+def _check_manifest_consistency(manifest_path: Path, health_counts: dict[str, int]) -> str | None:
+    if not manifest_path.exists():
+        return None
+    try:
+        with open(manifest_path, encoding="utf-8") as f:
+            manifest = json.load(f)
+        manifest_health = manifest.get("health_counts", {})
+        for h in ["OK", "DEGRADED", "LOST", "INVALID"]:
+            m_count = manifest_health.get(h, 0)
+            c_count = health_counts.get(h, 0)
+            if m_count != c_count:
+                return f"Health count mismatch for '{h}': manifest has {m_count}, CSV has {c_count}"
+    except Exception as e:
+        return f"Failed to check manifest consistency: {e}"
+    return None
+
+
+def _check_tum_consistency(tum_path: Path, expected_tum_count: int) -> str | None:
+    if not tum_path.exists():
+        return None
+    try:
+        tum_row_count = 0
+        with open(tum_path, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    tum_row_count += 1
+        if tum_row_count != expected_tum_count:
+            return f"TUM row count {tum_row_count} does not match OK+DEGRADED count {expected_tum_count}"
+    except Exception as e:
+        return f"Failed to check TUM consistency: {e}"
+    return None
+
+
+def _check_metrics_consistency(metrics_path: Path, total_trajectory_rows: int) -> str | None:
+    if not metrics_path.exists():
+        return None
+    try:
+        with open(metrics_path, encoding="utf-8") as f:
+            metrics_data = json.load(f)
+
+        coverage = metrics_data.get("coverage", {})
+        total_est_poses = coverage.get("total_estimate_poses")
+
+        if total_est_poses is None:
+            failures = metrics_data.get("failures", {})
+            if failures:
+                total_est_poses = sum(
+                    failures.get(k, 0)
+                    for k in ["ok_pose_count", "degraded_pose_count", "lost_pose_count", "invalid_pose_count"]
+                )
+            else:
+                total_est_poses = metrics_data.get("runtime", {}).get("update_count")
+
+        if total_est_poses != total_trajectory_rows:
+            return (
+                f"metrics.json pose count {total_est_poses} does not match trajectory row count {total_trajectory_rows}"
+            )
+    except Exception as e:
+        return f"Failed to check metrics consistency: {e}"
+    return None
+
+
 def check_cross_consistency(run_dir: str | Path) -> ValidationResult:
     run_dir = Path(run_dir)
     manifest_path = run_dir / "run_manifest.json"
@@ -424,88 +566,26 @@ def check_cross_consistency(run_dir: str | Path) -> ValidationResult:
     metrics_path = run_dir / "metrics.json"
 
     if not trajectory_path.exists():
-        return ValidationResult("check_cross_consistency", False, "Missing estimated_trajectory.csv for cross-consistency check")
+        return ValidationResult(
+            "check_cross_consistency", False, "Missing estimated_trajectory.csv for cross-consistency check"
+        )
 
-    health_counts_csv = {"OK": 0, "DEGRADED": 0, "LOST": 0, "INVALID": 0}
-    total_trajectory_rows = 0
-    try:
-        with open(trajectory_path, newline="", encoding="utf-8") as f:
-            reader = csv.reader(f)
-            header = next(reader)
-            if "health" not in header:
-                return ValidationResult("check_cross_consistency", False, "health column missing in trajectory CSV")
-            health_idx = header.index("health")
-            for row in reader:
-                if not row:
-                    continue
-                total_trajectory_rows += 1
-                h_val = row[health_idx]
-                if not h_val:
-                    h_val = "OK"
-                health_counts_csv[h_val] = health_counts_csv.get(h_val, 0) + 1
-    except Exception as e:
-        return ValidationResult("check_cross_consistency", False, f"Failed to read trajectory CSV: {e}")
+    health_counts, total_rows, err = _load_trajectory_health(trajectory_path)
+    if err:
+        return ValidationResult("check_cross_consistency", False, err)
 
-    # 1. Verify health_counts in manifest match actual health column distribution in trajectory CSV
-    if manifest_path.exists():
-        try:
-            with open(manifest_path, encoding="utf-8") as f:
-                manifest = json.load(f)
-            manifest_health = manifest.get("health_counts", {})
-            for h in ["OK", "DEGRADED", "LOST", "INVALID"]:
-                m_count = manifest_health.get(h, 0)
-                c_count = health_counts_csv.get(h, 0)
-                if m_count != c_count:
-                    return ValidationResult(
-                        "check_cross_consistency",
-                        False,
-                        f"Health count mismatch for '{h}': manifest has {m_count}, CSV has {c_count}"
-                    )
-        except Exception as e:
-            return ValidationResult("check_cross_consistency", False, f"Failed to check manifest consistency: {e}")
+    err = _check_manifest_consistency(manifest_path, health_counts)
+    if err:
+        return ValidationResult("check_cross_consistency", False, err)
 
-    # 2. Verify TUM row count equals OK+DEGRADED count from trajectory CSV
-    if tum_path.exists():
-        try:
-            tum_row_count = 0
-            with open(tum_path, encoding="utf-8") as f:
-                for line in f:
-                    if line.strip():
-                        tum_row_count += 1
-            expected_tum_count = health_counts_csv["OK"] + health_counts_csv["DEGRADED"]
-            if tum_row_count != expected_tum_count:
-                return ValidationResult(
-                    "check_cross_consistency",
-                    False,
-                    f"TUM row count {tum_row_count} does not match OK+DEGRADED count {expected_tum_count}"
-                )
-        except Exception as e:
-            return ValidationResult("check_cross_consistency", False, f"Failed to check TUM consistency: {e}")
+    expected_tum = health_counts["OK"] + health_counts["DEGRADED"]
+    err = _check_tum_consistency(tum_path, expected_tum)
+    if err:
+        return ValidationResult("check_cross_consistency", False, err)
 
-    # 3. Verify metrics.json coverage.total_estimate_poses matches trajectory CSV row count
-    if metrics_path.exists():
-        try:
-            with open(metrics_path, encoding="utf-8") as f:
-                metrics_data = json.load(f)
-
-            coverage = metrics_data.get("coverage", {})
-            total_est_poses = coverage.get("total_estimate_poses")
-
-            if total_est_poses is None:
-                failures = metrics_data.get("failures", {})
-                if failures:
-                    total_est_poses = sum(failures.get(k, 0) for k in ["ok_pose_count", "degraded_pose_count", "lost_pose_count", "invalid_pose_count"])
-                else:
-                    total_est_poses = metrics_data.get("runtime", {}).get("update_count")
-
-            if total_est_poses != total_trajectory_rows:
-                return ValidationResult(
-                    "check_cross_consistency",
-                    False,
-                    f"metrics.json pose count {total_est_poses} does not match trajectory row count {total_trajectory_rows}"
-                )
-        except Exception as e:
-            return ValidationResult("check_cross_consistency", False, f"Failed to check metrics consistency: {e}")
+    err = _check_metrics_consistency(metrics_path, total_rows)
+    if err:
+        return ValidationResult("check_cross_consistency", False, err)
 
     return ValidationResult("check_cross_consistency", True, "All cross-consistency checks passed")
 
@@ -551,7 +631,9 @@ def validate_run_directory(run_dir: str | Path, expect_eval: bool = True) -> tup
         if traj_plot is not None:
             results.append(check_plot_file(traj_plot))
         else:
-            results.append(ValidationResult("check_plot_file", False, "Missing trajectory_plot.png or trajectory_plot.svg"))
+            results.append(
+                ValidationResult("check_plot_file", False, "Missing trajectory_plot.png or trajectory_plot.svg")
+            )
 
         drift_plot = None
         for ext in [".png", ".svg"]:
