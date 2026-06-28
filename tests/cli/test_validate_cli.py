@@ -44,25 +44,21 @@ def _write_non_coplanar_sequence(root: Path) -> None:
         velocities.append(v_next.tolist())
 
         p_curr = np.array(positions[i])
-        p_next = p_curr + v_curr * dt + 0.5 * a_world * (dt ** 2)
+        p_next = p_curr + v_curr * dt + 0.5 * a_world * (dt**2)
         positions.append(p_next.tolist())
 
     with open(root / "ground_truth" / "trajectory.csv", "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "timestamp_s", "x_m", "y_m", "z_m", "yaw_deg",
-            "qx", "qy", "qz", "qw", "vx_mps", "vy_mps", "vz_mps"
-        ])
+        writer.writerow(
+            ["timestamp_s", "x_m", "y_m", "z_m", "yaw_deg", "qx", "qy", "qz", "qw", "vx_mps", "vy_mps", "vz_mps"]
+        )
         for i in range(10):
             t = float(i)
             p = positions[i]
             q = orientations[i]
             v = velocities[i]
             # Write with a slight offset (0.05m) to avoid identity
-            writer.writerow([
-                t, p[0] + 0.05, p[1] + 0.05, p[2] + 0.05, 0.0,
-                q[0], q[1], q[2], q[3], v[0], v[1], v[2]
-            ])
+            writer.writerow([t, p[0] + 0.05, p[1] + 0.05, p[2] + 0.05, 0.0, q[0], q[1], q[2], q[3], v[0], v[1], v[2]])
 
 
 def test_validate_after_run_and_eval(tmp_path):

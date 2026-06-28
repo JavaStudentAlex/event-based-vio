@@ -41,7 +41,7 @@ S05 consumes S03 CLI/backend path (run directory layout, manifest, failure notes
   - Files: `tests/cli/test_validate_cli.py`
   - Verify: PYTHONPATH=src uv run --only-dev pytest tests/cli/test_validate_cli.py -v
 
-- [ ] **T05: Full regression suite and lint verification** `est:small`
+- [x] **T05: Completed full regression suite and lint format validation checks for run-directory validation.** `est:small`
   **Why:** S05 must not break any existing tests. The final task verifies the complete test suite, lint, and format checks pass together.
   - Files: `src/nav_benchmark/validation.py`, `src/nav_benchmark/run.py`, `tests/validation/test_artifact_validation.py`, `tests/cli/test_validate_cli.py`
   - Verify: uv run --only-dev ruff check . && uv run --only-dev ruff format --check . && PYTHONPATH=src uv run --only-dev pytest tests -q

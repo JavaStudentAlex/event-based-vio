@@ -25,7 +25,7 @@
 - [x] **S04: Drift Evaluation and Plots** `risk:high` `depends:[S02,S03]`
   > After this: The evaluator aligns estimates to ground truth with explicit SE3 policy and produces valid `metrics.json`, `error_vs_time.csv`, `error_vs_distance.csv`, trajectory plot, and drift-over-distance plot.
 
-- [ ] **S05: Manifest Failure Artifacts and CI Smoke Coverage** `risk:medium` `depends:[S03,S04]`
+- [x] **S05: Manifest Failure Artifacts and CI Smoke Coverage** `risk:medium` `depends:[S03,S04]`
   > After this: The benchmark run always writes `run_manifest.json`, `failure_notes.md`, logs, and CI-friendly tests validate artifact contents rather than file presence alone.
 
 ## Boundary Map

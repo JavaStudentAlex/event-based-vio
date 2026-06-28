@@ -8,7 +8,9 @@ from pathlib import Path
 import numpy as np
 
 from nav_benchmark.baselines.event_imu import EventImuBackend, EventImuConfig
+from nav_benchmark.baselines.image_imu import ImageImuBackend, ImageImuConfig
 from nav_benchmark.baselines.imu import ImuOnlyBackend, ImuOnlyConfig
+from nav_benchmark.baselines.multimodal_vio import MultimodalVioBackend, MultimodalVioConfig
 from nav_benchmark.baselines.visual import EventVoBackend, FeatureVoConfig, RgbVoBackend
 from nav_benchmark.datasets.mvsec import (
     IMU_DTYPE,
@@ -221,6 +223,23 @@ def run_estimator(args, sequence, run_dir: Path | None = None):
         backend = EventImuBackend()
         result = backend.run_result(sequence, config=config)
         return result.trajectory, config
+    if args.method == "image_imu":
+        config = ImageImuConfig(
+            imu_config=_imu_only_config_for_sequence(args, sequence),
+            rgb_vo_config=_rgb_vo_config(run_dir),
+        )
+        backend = ImageImuBackend()
+        result = backend.run_result(sequence, config=config)
+        return result.trajectory, config
+    if args.method == "multimodal_vio":
+        config = MultimodalVioConfig(
+            imu_config=_imu_only_config_for_sequence(args, sequence),
+            rgb_vo_config=_rgb_vo_config(run_dir),
+            event_vo_config=_event_vo_config(run_dir),
+        )
+        backend = MultimodalVioBackend()
+        result = backend.run_result(sequence, config=config)
+        return result.trajectory, config
     if args.method == "ensemble":
         baseline_trajectories = {}
 
@@ -233,6 +252,17 @@ def run_estimator(args, sequence, run_dir: Path | None = None):
             event_vo_config=_event_vo_config(run_dir),
         )
         baseline_trajectories["event_imu"] = EventImuBackend().run(sequence, config=event_imu_config)
+        image_imu_config = ImageImuConfig(
+            imu_config=imu_config,
+            rgb_vo_config=_rgb_vo_config(run_dir),
+        )
+        baseline_trajectories["image_imu"] = ImageImuBackend().run(sequence, config=image_imu_config)
+        multimodal_vio_config = MultimodalVioConfig(
+            imu_config=imu_config,
+            rgb_vo_config=_rgb_vo_config(run_dir),
+            event_vo_config=_event_vo_config(run_dir),
+        )
+        baseline_trajectories["multimodal_vio"] = MultimodalVioBackend().run(sequence, config=multimodal_vio_config)
 
         config = EnsembleConfig()
         trajectory = fuse_trajectories(baseline_trajectories, config=config)
@@ -241,6 +271,8 @@ def run_estimator(args, sequence, run_dir: Path | None = None):
             "input_methods": sorted(baseline_trajectories),
             "imu_config": imu_config,
             "event_imu_config": event_imu_config,
+            "image_imu_config": image_imu_config,
+            "multimodal_vio_config": multimodal_vio_config,
         }
     raise NotImplementedError(f"Method {args.method} is not implemented")
 
@@ -423,7 +455,7 @@ def main() -> None:  # noqa: C901
     run_parser.add_argument(
         "--method",
         required=True,
-        choices=["imu_only", "rgb_vo", "event_vo", "event_imu", "ensemble"],
+        choices=["imu_only", "rgb_vo", "event_vo", "event_imu", "image_imu", "multimodal_vio", "ensemble"],
         help="Estimation method to run",
     )
     run_parser.add_argument(

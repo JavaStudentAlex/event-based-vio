@@ -7,12 +7,14 @@ import numpy as np
 from nav_benchmark.baselines.common import interpolate_trajectory, normalize_quaternions
 from nav_benchmark.trajectory.models import PoseHealth, Trajectory
 
-ENSEMBLE_METHODS = ("imu_only", "rgb_vo", "event_vo", "event_imu")
+ENSEMBLE_METHODS = ("imu_only", "rgb_vo", "event_vo", "event_imu", "image_imu", "multimodal_vio")
 ENSEMBLE_WEIGHT_COLUMNS = {
     "imu_only": "w_imu",
     "rgb_vo": "w_rgb",
     "event_vo": "w_event",
     "event_imu": "w_event_imu",
+    "image_imu": "w_image_imu",
+    "multimodal_vio": "w_multimodal",
 }
 
 
@@ -22,7 +24,9 @@ class EnsembleConfig:
 
     static_weights: dict[str, float] = field(
         default_factory=lambda: {
+            "multimodal_vio": 0.60,
             "event_imu": 0.50,
+            "image_imu": 0.50,
             "rgb_vo": 0.25,
             "event_vo": 0.15,
             "imu_only": 0.10,

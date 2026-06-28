@@ -118,15 +118,15 @@ def test_visual_event_event_imu_and_ensemble_outputs(tmp_path):
     )
 
     assert ensemble.method == "ensemble"
-    assert set(ensemble.extra_columns) == {"w_imu", "w_rgb", "w_event", "w_event_imu"}
-    weights = np.stack([ensemble.extra_columns[name] for name in ("w_imu", "w_rgb", "w_event", "w_event_imu")], axis=1)
+    assert set(ensemble.extra_columns) == {"w_imu", "w_rgb", "w_event", "w_event_imu", "w_image_imu", "w_multimodal"}
+    weights = np.stack([ensemble.extra_columns[name] for name in ("w_imu", "w_rgb", "w_event", "w_event_imu", "w_image_imu", "w_multimodal")], axis=1)
     np.testing.assert_allclose(np.sum(weights, axis=1), np.ones(len(ensemble.timestamps)))
 
     export_path = tmp_path / "ensemble.csv"
     export_project_csv(ensemble, export_path)
     with open(export_path, newline="", encoding="utf-8") as f:
         header = next(csv.reader(f))
-    assert header[-4:] == ["w_imu", "w_rgb", "w_event", "w_event_imu"]
+    assert set(header[-6:]) == {"w_imu", "w_rgb", "w_event", "w_event_imu", "w_image_imu", "w_multimodal"}
 
     read_back = read_project_csv(export_path)
     assert read_back.method == "ensemble"

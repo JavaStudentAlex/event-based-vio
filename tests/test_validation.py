@@ -39,10 +39,21 @@ def test_check_trajectory_csv(tmp_path):
 
     # Valid header but no rows
     cols = [
-        "timestamp", "method", "x", "y", "z",
-        "qx", "qy", "qz", "qw",
-        "vx", "vy", "vz",
-        "confidence", "health", "latency_ms"
+        "timestamp",
+        "method",
+        "x",
+        "y",
+        "z",
+        "qx",
+        "qy",
+        "qz",
+        "qw",
+        "vx",
+        "vy",
+        "vz",
+        "confidence",
+        "health",
+        "latency_ms",
     ]
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -55,7 +66,25 @@ def test_check_trajectory_csv(tmp_path):
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(cols)
-        writer.writerow(["1.0", "imu_only", "1.0", "2.0", "3.0", "0.0", "0.0", "0.0", "1.0", "0.1", "0.2", "0.3", "0.99", "OK", "5.0"])
+        writer.writerow(
+            [
+                "1.0",
+                "imu_only",
+                "1.0",
+                "2.0",
+                "3.0",
+                "0.0",
+                "0.0",
+                "0.0",
+                "1.0",
+                "0.1",
+                "0.2",
+                "0.3",
+                "0.99",
+                "OK",
+                "5.0",
+            ]
+        )
     res = check_trajectory_csv(path)
     assert res.passed
     assert "Trajectory CSV is valid" in res.message
@@ -83,15 +112,44 @@ def test_check_tum_file(tmp_path):
     # With companion CSV showing health LOST at matched timestamp
     csv_path = tmp_path / "estimated_trajectory.csv"
     cols = [
-        "timestamp", "method", "x", "y", "z",
-        "qx", "qy", "qz", "qw",
-        "vx", "vy", "vz",
-        "confidence", "health", "latency_ms"
+        "timestamp",
+        "method",
+        "x",
+        "y",
+        "z",
+        "qx",
+        "qy",
+        "qz",
+        "qw",
+        "vx",
+        "vy",
+        "vz",
+        "confidence",
+        "health",
+        "latency_ms",
     ]
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(cols)
-        writer.writerow(["1.00001", "imu_only", "1.0", "2.0", "3.0", "0.0", "0.0", "0.0", "1.0", "0.1", "0.2", "0.3", "0.99", "LOST", "5.0"])
+        writer.writerow(
+            [
+                "1.00001",
+                "imu_only",
+                "1.0",
+                "2.0",
+                "3.0",
+                "0.0",
+                "0.0",
+                "0.0",
+                "1.0",
+                "0.1",
+                "0.2",
+                "0.3",
+                "0.99",
+                "LOST",
+                "5.0",
+            ]
+        )
 
     res = check_tum_file(path)
     assert not res.passed
@@ -125,12 +183,7 @@ def test_check_run_manifest(tmp_path):
         "alignment": {},
         "code_version": "v1.0",
         "status": "success",
-        "health_counts": {
-            "OK": 10,
-            "DEGRADED": 0,
-            "LOST": 0,
-            "INVALID": 0
-        }
+        "health_counts": {"OK": 10, "DEGRADED": 0, "LOST": 0, "INVALID": 0},
     }
     with open(path, "w") as f:
         json.dump(manifest, f)
@@ -168,7 +221,7 @@ def test_check_failure_notes(tmp_path):
         "alignment": {},
         "code_version": "v1.0",
         "status": "success",
-        "health_counts": {"OK": 10, "DEGRADED": 0, "LOST": 0, "INVALID": 0}
+        "health_counts": {"OK": 10, "DEGRADED": 0, "LOST": 0, "INVALID": 0},
     }
     with open(manifest_path, "w") as f:
         json.dump(manifest, f)
@@ -179,7 +232,9 @@ def test_check_failure_notes(tmp_path):
 
     # Fully valid with zero failures
     with open(path, "w") as f:
-        f.write("# Run Failure Notes\n## Health Summary\n## Detected Degraded/Lost Intervals\nNo degraded or lost intervals were detected.\n")
+        f.write(
+            "# Run Failure Notes\n## Health Summary\n## Detected Degraded/Lost Intervals\nNo degraded or lost intervals were detected.\n"
+        )
     res = check_failure_notes(path)
     assert res.passed
 
@@ -206,7 +261,7 @@ def test_check_metrics_json(tmp_path):
         "alignment": {},
         "diagnostics": {},
         "coverage": {},
-        "drift_bins": []
+        "drift_bins": [],
     }
     with open(path, "w") as f:
         json.dump(metrics_data, f)
@@ -237,10 +292,19 @@ def test_check_error_vs_time_csv(tmp_path):
 
     # Valid header with rows
     header = [
-        "timestamp", "est_x", "est_y", "est_z",
-        "gt_aligned_x", "gt_aligned_y", "gt_aligned_z",
-        "error_x", "error_y", "error_z", "error_magnitude",
-        "health", "association_residual"
+        "timestamp",
+        "est_x",
+        "est_y",
+        "est_z",
+        "gt_aligned_x",
+        "gt_aligned_y",
+        "gt_aligned_z",
+        "error_x",
+        "error_y",
+        "error_z",
+        "error_magnitude",
+        "health",
+        "association_residual",
     ]
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -258,10 +322,7 @@ def test_check_error_vs_distance_csv(tmp_path):
     assert not res.passed
 
     # Valid header and rows
-    header = [
-        "cumulative_distance", "error_magnitude", "health",
-        "association_residual", "bin_start", "bin_end"
-    ]
+    header = ["cumulative_distance", "error_magnitude", "health", "association_residual", "bin_start", "bin_end"]
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(header)
@@ -313,16 +374,63 @@ def test_check_cross_consistency(tmp_path):
     # Setup files in tmp_path
     traj_path = tmp_path / "estimated_trajectory.csv"
     cols = [
-        "timestamp", "method", "x", "y", "z",
-        "qx", "qy", "qz", "qw",
-        "vx", "vy", "vz",
-        "confidence", "health", "latency_ms"
+        "timestamp",
+        "method",
+        "x",
+        "y",
+        "z",
+        "qx",
+        "qy",
+        "qz",
+        "qw",
+        "vx",
+        "vy",
+        "vz",
+        "confidence",
+        "health",
+        "latency_ms",
     ]
     with open(traj_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(cols)
-        writer.writerow(["1.0", "imu_only", "1.0", "2.0", "3.0", "0.0", "0.0", "0.0", "1.0", "0.1", "0.2", "0.3", "0.99", "OK", "5.0"])
-        writer.writerow(["2.0", "imu_only", "1.0", "2.0", "3.0", "0.0", "0.0", "0.0", "1.0", "0.1", "0.2", "0.3", "0.99", "DEGRADED", "5.0"])
+        writer.writerow(
+            [
+                "1.0",
+                "imu_only",
+                "1.0",
+                "2.0",
+                "3.0",
+                "0.0",
+                "0.0",
+                "0.0",
+                "1.0",
+                "0.1",
+                "0.2",
+                "0.3",
+                "0.99",
+                "OK",
+                "5.0",
+            ]
+        )
+        writer.writerow(
+            [
+                "2.0",
+                "imu_only",
+                "1.0",
+                "2.0",
+                "3.0",
+                "0.0",
+                "0.0",
+                "0.0",
+                "1.0",
+                "0.1",
+                "0.2",
+                "0.3",
+                "0.99",
+                "DEGRADED",
+                "5.0",
+            ]
+        )
 
     # Missing manifest, tum, metrics -> should still pass on whatever is present
     res = check_cross_consistency(tmp_path)
@@ -342,7 +450,12 @@ def test_check_cross_consistency(tmp_path):
         "alignment": {},
         "code_version": "v1.0",
         "status": "success",
-        "health_counts": {"OK": 2, "DEGRADED": 0, "LOST": 0, "INVALID": 0} # Mismatch: OK should be 1, DEGRADED should be 1
+        "health_counts": {
+            "OK": 2,
+            "DEGRADED": 0,
+            "LOST": 0,
+            "INVALID": 0,
+        },  # Mismatch: OK should be 1, DEGRADED should be 1
     }
     with open(manifest_path, "w") as f:
         json.dump(manifest, f)
@@ -385,9 +498,9 @@ def test_check_cross_consistency(tmp_path):
         "alignment": {},
         "diagnostics": {},
         "coverage": {
-            "total_estimate_poses": 3 # Mismatch: 3 vs 2
+            "total_estimate_poses": 3  # Mismatch: 3 vs 2
         },
-        "drift_bins": []
+        "drift_bins": [],
     }
     with open(metrics_path, "w") as f:
         json.dump(metrics_data, f)
