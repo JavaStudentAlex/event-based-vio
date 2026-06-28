@@ -19,7 +19,7 @@
 - [x] **S02: Synchronization and Trajectory Export Contract** `risk:high` `depends:[S01]`
   > After this: IMU samples and ground truth are timestamp-associated without silent drops, and a synthetic trajectory exports valid project CSV plus TUM files.
 
-- [ ] **S03: IMU Only Backend and CLI Run Path** `risk:medium` `depends:[S02]`
+- [x] **S03: IMU Only Backend and CLI Run Path** `risk:medium` `depends:[S02]`
   > After this: One command runs `imu_only` on synthetic data through the backend interface and writes the required run directory skeleton with valid trajectory artifacts.
 
 - [ ] **S04: Drift Evaluation and Plots** `risk:high` `depends:[S02,S03]`

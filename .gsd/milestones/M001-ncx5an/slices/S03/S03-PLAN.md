@@ -40,7 +40,7 @@ Wires dataset loader + IMU-only backend + trajectory exporters into a single CLI
   - Files: `src/nav_benchmark/baselines/base.py`, `src/nav_benchmark/baselines/imu.py`, `tests/baselines/test_imu_only_smoke.py`
   - Verify: rtk uv run pytest tests/baselines/test_imu_only_smoke.py -q
 
-- [ ] **T02: CLI entrypoint `python -m nav_benchmark.run` wiring loaders → backend → exporters** `est:1h`
+- [x] **T02: CLI entrypoint python -m nav_benchmark.run wiring loaders -> backend -> exporters** `est:1h`
   Why: Provide an executable run path for imu_only that creates the standard run directory skeleton and trajectory artifacts.
   Do:
   - Add `src/nav_benchmark/run.py` with argparse-based `run` subcommand and flags: `--method imu_only`, `--dataset {synthetic|mvsec}`, `--sequence <name>`, `--input <path>` (required for mvsec), `--output-root runs`, `--resume`.
@@ -52,7 +52,7 @@ Wires dataset loader + IMU-only backend + trajectory exporters into a single CLI
   - Files: `src/nav_benchmark/run.py`, `tests/cli/test_run_cli_synthetic.py`
   - Verify: rtk uv run pytest tests/cli/test_run_cli_synthetic.py -q
 
-- [ ] **T03: Manifest and failure-notes generation with health counts** `est:45m`
+- [x] **T03: Implemented run_manifest.json and failure_notes.md generation with health counts, and verified via test suite.** `est:45m`
   Why: Downstream evaluation (S04/S5) depends on reproducible metadata and explicit failure visibility.
   Do:
   - In the CLI flow, compute health counts from the Trajectory and ExportMetadata and write `run_manifest.json` with method, dataset/sequence, gravity, timestamp/alignment placeholders, thresholds, code version (if available), and counts.
@@ -62,7 +62,7 @@ Wires dataset loader + IMU-only backend + trajectory exporters into a single CLI
   - Files: `src/nav_benchmark/run.py`, `tests/cli/test_run_manifest_and_notes.py`
   - Verify: rtk uv run pytest tests/cli/test_run_manifest_and_notes.py -q
 
-- [ ] **T04: CLI usage doc stub** `est:20m`
+- [x] **T04: Created CLI usage documentation guide detailing invocation examples, run directory structure, and resume behavior.** `est:20m`
   Why: Provide quick-start guidance for humans running the slice manually.
   Do:
   - Create `docs/run/cli.md` with invocation examples for synthetic and MVSEC, description of run directory structure, and notes on resume behavior.

@@ -1,7 +1,7 @@
 # Codebase Map
 
-Generated: 2026-06-27T22:26:40Z | Files: 60 | Described: 0/60
-<!-- gsd:codebase-meta {"generatedAt":"2026-06-27T22:26:40Z","fingerprint":"36b833c91378557b0853cd6fa86661a4c621a056","fileCount":60,"truncated":false} -->
+Generated: 2026-06-28T00:32:05Z | Files: 67 | Described: 0/67
+<!-- gsd:codebase-meta {"generatedAt":"2026-06-28T00:32:05Z","fingerprint":"51e2704c24db52d79e017d382c1f0b9a2f704651","fileCount":67,"truncated":false} -->
 
 ### (root)/
 - `.gitignore`
@@ -66,6 +66,9 @@ Generated: 2026-06-27T22:26:40Z | Files: 60 | Described: 0/60
 ### docs/datasets/
 - `docs/datasets/mvsec.md`
 
+### docs/run/
+- `docs/run/cli.md`
+
 ### docs/trajectory/
 - `docs/trajectory/export-contract.md`
 - `docs/trajectory/synchronization.md`
@@ -78,6 +81,11 @@ Generated: 2026-06-27T22:26:40Z | Files: 60 | Described: 0/60
 
 ### src/nav_benchmark/
 - `src/nav_benchmark/__init__.py`
+- `src/nav_benchmark/run.py`
+
+### src/nav_benchmark/baselines/
+- `src/nav_benchmark/baselines/base.py`
+- `src/nav_benchmark/baselines/imu.py`
 
 ### src/nav_benchmark/datasets/
 - `src/nav_benchmark/datasets/__init__.py`
@@ -91,6 +99,13 @@ Generated: 2026-06-27T22:26:40Z | Files: 60 | Described: 0/60
 
 ### tests/
 - `tests/__init__.py`
+
+### tests/baselines/
+- `tests/baselines/test_imu_only_smoke.py`
+
+### tests/cli/
+- `tests/cli/test_run_cli_synthetic.py`
+- `tests/cli/test_run_manifest_and_notes.py`
 
 ### tests/nav_benchmark/
 - `tests/nav_benchmark/__init__.py`

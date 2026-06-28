@@ -66,3 +66,5 @@ dummy_output
 .mypy_cache
 milestone_1_event_imu_vio.md
 .claude
+runs
+google_earth_synthetic_sequence_task.md

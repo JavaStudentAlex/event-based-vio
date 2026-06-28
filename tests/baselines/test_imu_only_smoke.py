@@ -44,7 +44,7 @@ def test_imu_only_smoke() -> None:
     config = ImuOnlyConfig(
         gravity=np.array([0.0, 0.0, 9.81]),
         degraded_time_threshold=0.04,  # trigger degraded state early for testing
-        lost_time_threshold=0.08,      # trigger lost state early for testing
+        lost_time_threshold=0.08,  # trigger lost state early for testing
     )
 
     trajectory = backend.run(sequence, config=config)

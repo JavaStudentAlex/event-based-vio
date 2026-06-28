@@ -22,6 +22,7 @@ from nav_benchmark.trajectory.models import ExportMetadata, Trajectory
 def get_code_version() -> str:
     try:
         import importlib.metadata
+
         return importlib.metadata.version("event-based-vio")
     except Exception:
         pass
@@ -134,10 +135,8 @@ def run_estimator(args, sequence) -> tuple[Trajectory, ImuOnlyConfig]:
 
 def write_run_manifest(args, config, metadata, run_dir) -> dict:
     from nav_benchmark.trajectory.models import PoseHealth
-    health_counts = {
-        h.value: metadata.health_counts.get(h.value, 0)
-        for h in PoseHealth
-    }
+
+    health_counts = {h.value: metadata.health_counts.get(h.value, 0) for h in PoseHealth}
 
     run_manifest = {
         "method": args.method,
@@ -145,9 +144,15 @@ def write_run_manifest(args, config, metadata, run_dir) -> dict:
         "sequence": args.sequence,
         "config": {
             "gravity": config.gravity.tolist() if hasattr(config, "gravity") else [0.0, 0.0, 9.81],
-            "initial_position": config.initial_position.tolist() if hasattr(config, "initial_position") else [0.0, 0.0, 0.0],
-            "initial_orientation": config.initial_orientation.tolist() if hasattr(config, "initial_orientation") else [0.0, 0.0, 0.0, 1.0],
-            "initial_velocity": config.initial_velocity.tolist() if hasattr(config, "initial_velocity") else [0.0, 0.0, 0.0],
+            "initial_position": config.initial_position.tolist()
+            if hasattr(config, "initial_position")
+            else [0.0, 0.0, 0.0],
+            "initial_orientation": config.initial_orientation.tolist()
+            if hasattr(config, "initial_orientation")
+            else [0.0, 0.0, 0.0, 1.0],
+            "initial_velocity": config.initial_velocity.tolist()
+            if hasattr(config, "initial_velocity")
+            else [0.0, 0.0, 0.0],
             "degraded_time_threshold": getattr(config, "degraded_time_threshold", 5.0),
             "lost_time_threshold": getattr(config, "lost_time_threshold", 10.0),
             "degraded_drift_threshold": getattr(config, "degraded_drift_threshold", 50.0),
@@ -252,9 +257,7 @@ def main() -> None:
             with open(log_path, "a") as f:
                 f.write(f"[{formatted_time}] {msg}\n")
 
-        log_message(
-            f"[START] Method: {args.method}, Dataset: {args.dataset}, Sequence: {args.sequence}"
-        )
+        log_message(f"[START] Method: {args.method}, Dataset: {args.dataset}, Sequence: {args.sequence}")
 
         try:
             # 1. Load sequence

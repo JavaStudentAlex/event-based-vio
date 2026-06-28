@@ -1,0 +1,90 @@
+C901 `read_project_csv` is too complex (26 > 10)
+   --> src/nav_benchmark/evaluation/metrics.py:118:5
+    |
+116 |     aligned_ground_truth: Trajectory | None = None
+117 |
+118 | def read_project_csv(path: str | Path) -> Trajectory:
+    |     ^^^^^^^^^^^^^^^^
+119 |     """
+120 |     Reads a trajectory CSV file following the project schema:
+    |
+
+B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
+   --> src/nav_benchmark/evaluation/metrics.py:142:13
+    |
+140 |             header = next(reader)
+141 |         except StopIteration:
+142 |             raise EvaluationError(f"CSV file is empty: {path}")
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+143 |
+144 |         # Basic verification of required columns
+    |
+
+B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
+   --> src/nav_benchmark/evaluation/metrics.py:179:17
+    |
+177 |                 qw = float(qw_str)
+178 |             except ValueError as e:
+179 |                 raise EvaluationError(f"Non-numeric value in row {idx+2}: {e}")
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+180 |
+181 |             if not (np.isfinite(ts) and np.isfinite(x) and np.isfinite(y) and np.isfinite(z) and
+    |
+
+C901 `evaluate_trajectory` is too complex (22 > 10)
+   --> src/nav_benchmark/evaluation/metrics.py:278:5
+    |
+276 |     )
+277 |
+278 | def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: EvalConfig) -> EvaluationResult:
+    |     ^^^^^^^^^^^^^^^^^^^
+279 |     """
+280 |     Evaluates an estimated trajectory against a ground-truth reference trajectory.
+    |
+
+F841 Local variable `est_pos_filt` is assigned to but never used
+   --> src/nav_benchmark/evaluation/metrics.py:331:5
+    |
+330 |     est_ts_filt = estimate.timestamps[ok_deg_mask]
+331 |     est_pos_filt = estimate.positions[ok_deg_mask]
+    |     ^^^^^^^^^^^^
+332 |     est_ori_filt = estimate.orientations[ok_deg_mask]
+    |
+help: Remove assignment to unused variable `est_pos_filt`
+
+F841 Local variable `est_ori_filt` is assigned to but never used
+   --> src/nav_benchmark/evaluation/metrics.py:332:5
+    |
+330 |     est_ts_filt = estimate.timestamps[ok_deg_mask]
+331 |     est_pos_filt = estimate.positions[ok_deg_mask]
+332 |     est_ori_filt = estimate.orientations[ok_deg_mask]
+    |     ^^^^^^^^^^^^
+333 |
+334 |     # 4. Synchronize filtered estimate timestamps to reference timestamps
+    |
+help: Remove assignment to unused variable `est_ori_filt`
+
+B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
+   --> src/nav_benchmark/evaluation/metrics.py:340:9
+    |
+338 |         )
+339 |     except Exception as e:
+340 |         raise EvaluationError(f"Timestamp synchronization failed: {e}")
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+341 |
+342 |     # Map matched_est_filt_idx back to original estimate indices
+    |
+
+B904 Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
+   --> src/nav_benchmark/evaluation/metrics.py:380:13
+    |
+378 |             )
+379 |         except Exception as e:
+380 |             raise EvaluationError(f"Global SE(3) alignment failed: {e}")
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+381 |
+382 |         # Construct transformation matrix
+    |
+
+Found 8 errors.
+No fixes available (2 hidden fixes can be enabled with the `--unsafe-fixes` option).

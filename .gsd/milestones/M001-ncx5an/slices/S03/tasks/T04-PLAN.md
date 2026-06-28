@@ -4,7 +4,7 @@ estimated_files: 1
 skills_used: []
 ---
 
-# T04: CLI usage doc stub
+# T04: Created CLI usage documentation guide detailing invocation examples, run directory structure, and resume behavior.
 
 Why: Provide quick-start guidance for humans running the slice manually.
 Do:

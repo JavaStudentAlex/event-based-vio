@@ -14,6 +14,7 @@ class ImuOnlyConfig:
     """
     Configuration for IMU-only propagation backend.
     """
+
     gravity: np.ndarray = field(default_factory=lambda: np.array([0.0, 0.0, 9.81]))
     initial_position: np.ndarray = field(default_factory=lambda: np.array([0.0, 0.0, 0.0]))
     initial_orientation: np.ndarray = field(default_factory=lambda: np.array([0.0, 0.0, 0.0, 1.0]))  # xyzw
@@ -92,7 +93,7 @@ class ImuOnlyBackend(BaseOdometryBackend):
 
             # Integrate velocity and position
             v_next = v_curr + a_world * dt
-            p_next = p_curr + v_curr * dt + 0.5 * a_world * (dt ** 2)
+            p_next = p_curr + v_curr * dt + 0.5 * a_world * (dt**2)
 
             velocities[i + 1] = v_next
             positions[i + 1] = p_next

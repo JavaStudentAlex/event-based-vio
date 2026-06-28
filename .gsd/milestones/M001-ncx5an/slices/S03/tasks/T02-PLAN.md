@@ -4,7 +4,7 @@ estimated_files: 2
 skills_used: []
 ---
 
-# T02: CLI entrypoint `python -m nav_benchmark.run` wiring loaders → backend → exporters
+# T02: CLI entrypoint python -m nav_benchmark.run wiring loaders -> backend -> exporters
 
 Why: Provide an executable run path for imu_only that creates the standard run directory skeleton and trajectory artifacts.
 Do:

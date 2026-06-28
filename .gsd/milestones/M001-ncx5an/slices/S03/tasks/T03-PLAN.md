@@ -4,7 +4,7 @@ estimated_files: 2
 skills_used: []
 ---
 
-# T03: Manifest and failure-notes generation with health counts
+# T03: Implemented run_manifest.json and failure_notes.md generation with health counts, and verified via test suite.
 
 Why: Downstream evaluation (S04/S5) depends on reproducible metadata and explicit failure visibility.
 Do:
