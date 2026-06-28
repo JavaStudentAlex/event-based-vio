@@ -2,7 +2,7 @@
 
 **Active Milestone:** M001-ncx5an: MVSEC Pipeline and IMU Sanity Benchmark
 **Active Slice:** S05: Manifest Failure Artifacts and CI Smoke Coverage
-**Phase:** planning
+**Phase:** evaluating-gates
 **Requirements Status:** 0 active · 3 validated · 0 deferred · 0 out of scope
 
 ## Milestone Registry
@@ -21,4 +21,4 @@
 - None
 
 ## Next Action
-Slice S05 has no DB tasks. Plan slice tasks before execution.
+Evaluate 2 quality gate(s) for S05 before execution.
