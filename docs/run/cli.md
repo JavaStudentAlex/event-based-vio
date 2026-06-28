@@ -18,6 +18,18 @@ python -m nav_benchmark.run run --method imu_only --dataset mvsec --sequence out
 ```
 *Note: `--input` is required when `--dataset` is set to `mvsec`.*
 
+## 3. Evaluation
+
+To evaluate a completed run against a ground-truth trajectory:
+```bash
+python -m nav_benchmark.run eval --run-dir runs/20260628_120000_imu_only_outdoor_day1 --ground-truth path/to/ground_truth.csv
+```
+
+Or to automatically find and evaluate the latest run:
+```bash
+python -m nav_benchmark.run eval --latest --ground-truth path/to/ground_truth.csv --method imu_only
+```
+
 ## CLI Options Reference
 
 The `run` subcommand supports the following arguments:
@@ -31,6 +43,19 @@ The `run` subcommand supports the following arguments:
 * `--input` (required for `mvsec`): Path to the input HDF5 data file.
 * `--output-root` (optional, default: `runs`): The directory where all run folders will be generated.
 * `--resume` (optional): If present, automatically handles existing run folder collisions by appending suffix increments (e.g., `-r1`, `-r2`).
+
+The `eval` subcommand supports the following arguments:
+
+* `--run-dir` (required unless `--latest` is set): Path to the run directory to evaluate.
+* `--latest` (optional): Automatically find and evaluate the latest run directory in `--output-root`.
+* `--ground-truth` (optional): Path to the ground truth trajectory file (CSV or MVSEC HDF5 file). If not provided, it attempts to resolve the input path from the run's `run_manifest.json`.
+* `--output-root` (optional, default: `runs`): The directory where run folders are stored (used with `--latest`).
+* `--method` (optional): Filter for `--latest` to match a specific method.
+* `--sequence` (optional): Filter for `--latest` to match a specific sequence.
+* `--association-tolerance-sec` (optional, default: `0.1`): Maximum allowed time difference for trajectory timestamp association.
+* `--rpe-delta-m` (optional, default: `1.0`): Distance step delta for RPE calculations.
+* `--drift-bin-width-m` (optional, default: `20.0`): Width of drift bins in meters.
+* `--alignment-policy` (optional, default: `se3`): Alignment policy (`se3` or `none`).
 
 ## Run Directory Structure
 

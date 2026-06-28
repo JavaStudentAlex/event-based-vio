@@ -4,27 +4,39 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-import pytest
 
 
 def create_synthetic_trajectory_csv(path: Path, timestamps, x_offsets=0.0):
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "timestamp", "method", "x", "y", "z", "qx", "qy", "qz", "qw",
-            "vx", "vy", "vz", "confidence", "health", "latency_ms"
-        ])
+        writer.writerow(
+            [
+                "timestamp",
+                "method",
+                "x",
+                "y",
+                "z",
+                "qx",
+                "qy",
+                "qz",
+                "qw",
+                "vx",
+                "vy",
+                "vz",
+                "confidence",
+                "health",
+                "latency_ms",
+            ]
+        )
         for t in timestamps:
             # Let's create a circle or linear motion
             # x = cos(t), y = sin(t), z = t * 0.1
             import math
+
             x = math.cos(t) + x_offsets
             y = math.sin(t)
             z = t * 0.1
-            writer.writerow([
-                t, "imu_only", x, y, z, 0.0, 0.0, 0.0, 1.0,
-                0.0, 0.0, 0.0, 1.0, "OK", 5.0
-            ])
+            writer.writerow([t, "imu_only", x, y, z, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, "OK", 5.0])
 
 
 def test_eval_cli_success(tmp_path):
@@ -46,15 +58,18 @@ def test_eval_cli_success(tmp_path):
     # 3. Create run_manifest.json
     manifest_path = run_dir / "run_manifest.json"
     with open(manifest_path, "w") as f:
-        json.dump({
-            "method": "imu_only",
-            "dataset": "synthetic",
-            "sequence": "test_seq",
-            "input": str(gt_path),
-            "config": {},
-            "status": "success",
-            "health_counts": {"OK": 6}
-        }, f)
+        json.dump(
+            {
+                "method": "imu_only",
+                "dataset": "synthetic",
+                "sequence": "test_seq",
+                "input": str(gt_path),
+                "config": {},
+                "status": "success",
+                "health_counts": {"OK": 6},
+            },
+            f,
+        )
 
     # Execute eval subcommand with run_dir, resolving ground-truth from manifest
     cmd = [
@@ -125,13 +140,16 @@ def test_eval_cli_latest_and_alignment(tmp_path):
 
     # Write run_manifest.json
     with open(run_dir / "run_manifest.json", "w") as f:
-        json.dump({
-            "method": "imu_only",
-            "dataset": "synthetic",
-            "sequence": "test_seq",
-            "input": str(gt_path),
-            "status": "success",
-        }, f)
+        json.dump(
+            {
+                "method": "imu_only",
+                "dataset": "synthetic",
+                "sequence": "test_seq",
+                "input": str(gt_path),
+                "status": "success",
+            },
+            f,
+        )
 
     cmd = [
         sys.executable,

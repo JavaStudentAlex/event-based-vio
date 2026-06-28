@@ -4,6 +4,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -16,21 +17,21 @@ from nav_benchmark.datasets.mvsec import (
     SequenceMetadata,
     load_mvsec_sequence,
 )
-from nav_benchmark.trajectory.export import export_project_csv, export_tum
-from nav_benchmark.trajectory.models import ExportMetadata, Trajectory
 from nav_benchmark.evaluation.metrics import (
     EvalConfig,
     evaluate_trajectory,
-    export_metrics_json,
-    export_error_vs_time_csv,
     export_error_vs_distance_csv,
-    read_project_csv,
+    export_error_vs_time_csv,
+    export_metrics_json,
     make_json_serializable,
+    read_project_csv,
 )
 from nav_benchmark.evaluation.plots import (
-    write_trajectory_plot,
     write_drift_over_distance_plot,
+    write_trajectory_plot,
 )
+from nav_benchmark.trajectory.export import export_project_csv, export_tum
+from nav_benchmark.trajectory.models import ExportMetadata, Trajectory
 
 
 def get_code_version() -> str:
@@ -279,8 +280,10 @@ def load_ground_truth(path: Path) -> Trajectory:
             raise ValueError(f"Failed to read ground truth from CSV: {e}") from e
 
 
+
+
 def write_failed_evaluation_artifacts(run_dir: Path, reason: str, config: EvalConfig) -> None:
-    failed_result = {
+    failed_result: dict[str, Any] = {
         "status": "failed",
         "reason": reason,
         "error_message": reason,
@@ -308,26 +311,51 @@ def write_failed_evaluation_artifacts(run_dir: Path, reason: str, config: EvalCo
 
     with open(run_dir / "ground_truth_aligned.csv", "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "timestamp", "method", "x", "y", "z", "qx", "qy", "qz", "qw",
-            "vx", "vy", "vz", "confidence", "health", "latency_ms"
-        ])
+        writer.writerow(
+            [
+                "timestamp",
+                "method",
+                "x",
+                "y",
+                "z",
+                "qx",
+                "qy",
+                "qz",
+                "qw",
+                "vx",
+                "vy",
+                "vz",
+                "confidence",
+                "health",
+                "latency_ms",
+            ]
+        )
 
     with open(run_dir / "error_vs_time.csv", "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "timestamp", "est_x", "est_y", "est_z",
-            "gt_aligned_x", "gt_aligned_y", "gt_aligned_z",
-            "error_x", "error_y", "error_z", "error_magnitude",
-            "health", "association_residual"
-        ])
+        writer.writerow(
+            [
+                "timestamp",
+                "est_x",
+                "est_y",
+                "est_z",
+                "gt_aligned_x",
+                "gt_aligned_y",
+                "gt_aligned_z",
+                "error_x",
+                "error_y",
+                "error_z",
+                "error_magnitude",
+                "health",
+                "association_residual",
+            ]
+        )
 
     with open(run_dir / "error_vs_distance.csv", "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "cumulative_distance", "error_magnitude", "health",
-            "association_residual", "bin_start", "bin_end"
-        ])
+        writer.writerow(
+            ["cumulative_distance", "error_magnitude", "health", "association_residual", "bin_start", "bin_end"]
+        )
 
 
 def main() -> None:
@@ -506,11 +534,7 @@ def main() -> None:
         # Determine run directory
         run_dir_path = None
         if args.latest:
-            run_dir_path = discover_latest_run_dir(
-                Path(args.output_root),
-                method=args.method,
-                sequence=args.sequence
-            )
+            run_dir_path = discover_latest_run_dir(Path(args.output_root), method=args.method, sequence=args.sequence)
             if not run_dir_path:
                 print("Error: No run directory found for evaluation.", file=sys.stderr)
                 sys.exit(1)
@@ -540,7 +564,7 @@ def main() -> None:
                 manifest_path = run_dir_path / "run_manifest.json"
                 if manifest_path.exists():
                     try:
-                        with open(manifest_path, "r", encoding="utf-8") as f:
+                        with open(manifest_path, encoding="utf-8") as f:
                             manifest = json.load(f)
                         manifest["evaluation"] = {
                             "status": "failed",
@@ -569,7 +593,7 @@ def main() -> None:
             manifest_path = run_dir_path / "run_manifest.json"
             if manifest_path.exists():
                 try:
-                    with open(manifest_path, "r", encoding="utf-8") as f:
+                    with open(manifest_path, encoding="utf-8") as f:
                         manifest = json.load(f)
                     gt_path_str = manifest.get("input")
                 except Exception as manifest_err:
@@ -578,9 +602,14 @@ def main() -> None:
             if not gt_path_str:
                 fail_eval("Ground truth path not specified and could not be resolved from run_manifest.json")
 
-        gt_path = Path(gt_path_str)
-        if not gt_path.exists():
-            fail_eval(f"Ground truth file not found: {gt_path}")
+        if gt_path_str is not None:
+            gt_path = Path(gt_path_str)
+            if not gt_path.exists():
+                fail_eval(f"Ground truth file not found: {gt_path}")
+        else:
+            # We fail above in if not gt_path_str, but this is to appease mypy
+            fail_eval("Ground truth path not specified and could not be resolved from run_manifest.json")
+            return
 
         try:
             estimate = read_project_csv(est_traj_path)
@@ -618,16 +647,31 @@ def main() -> None:
                     ExportMetadata(
                         source_frame="gt",
                         target_frame="world",
-                    )
+                    ),
                 )
             else:
                 # write empty ground_truth_aligned.csv
                 with open(run_dir_path / "ground_truth_aligned.csv", "w", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
-                    writer.writerow([
-                        "timestamp", "method", "x", "y", "z", "qx", "qy", "qz", "qw",
-                        "vx", "vy", "vz", "confidence", "health", "latency_ms"
-                    ])
+                    writer.writerow(
+                        [
+                            "timestamp",
+                            "method",
+                            "x",
+                            "y",
+                            "z",
+                            "qx",
+                            "qy",
+                            "qz",
+                            "qw",
+                            "vx",
+                            "vy",
+                            "vz",
+                            "confidence",
+                            "health",
+                            "latency_ms",
+                        ]
+                    )
 
             # Plots: trajectory and drift
             seq_name = getattr(args, "sequence", None) or ground_truth.method
@@ -651,7 +695,7 @@ def main() -> None:
             manifest_path = run_dir_path / "run_manifest.json"
             if manifest_path.exists():
                 try:
-                    with open(manifest_path, "r", encoding="utf-8") as f:
+                    with open(manifest_path, encoding="utf-8") as f:
                         manifest = json.load(f)
 
                     # Convert metrics and other fields to serializable form

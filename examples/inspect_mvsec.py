@@ -11,7 +11,7 @@ src_path = project_root / "src"
 if src_path.is_dir() and str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from nav_benchmark.datasets.mvsec import (  # noqa: E402
+from nav_benchmark.datasets.mvsec import (
     Calibration,
     LoadDiagnostics,
     SequenceMetadata,

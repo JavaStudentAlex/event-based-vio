@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from nav_benchmark.data.validation import validate_sequence
+
 from nav_benchmark.synthetic.config import load_config
 from nav_benchmark.synthetic.pipeline import SOURCE_GOOGLE_EARTH, SOURCE_SYNTHETIC, build_sequence
 
