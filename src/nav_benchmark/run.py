@@ -33,6 +33,7 @@ from nav_benchmark.evaluation.metrics import (
 from nav_benchmark.evaluation.plots import write_ensemble_weight_plot
 from nav_benchmark.trajectory.export import export_project_csv, export_tum
 from nav_benchmark.trajectory.models import ExportMetadata, Trajectory
+from nav_benchmark.validation import validate_run_directory
 
 
 def get_code_version() -> str:
@@ -504,6 +505,36 @@ def main() -> None:  # noqa: C901
         help="Alignment policy",
     )
 
+    # Subcommand 'validate'
+    validate_parser = subparsers.add_parser("validate", help="Validate run directory artifacts and consistency")
+    validate_parser.add_argument(
+        "--run-dir",
+        help="Path to a specific run directory to validate (required unless --latest is set)",
+    )
+    validate_parser.add_argument(
+        "--latest",
+        action="store_true",
+        help="Validate the latest run directory",
+    )
+    validate_parser.add_argument(
+        "--method",
+        help="Filter for --latest to match a specific method",
+    )
+    validate_parser.add_argument(
+        "--sequence",
+        help="Filter for --latest to match a specific sequence",
+    )
+    validate_parser.add_argument(
+        "--skip-eval",
+        action="store_true",
+        help="Skip evaluation artifact checks (for run-only directories)",
+    )
+    validate_parser.add_argument(
+        "--output-root",
+        default="runs",
+        help="Root directory where run folders are stored (used with --latest)",
+    )
+
     args = parser.parse_args()
 
     if args.command == "run":
@@ -707,6 +738,37 @@ def main() -> None:  # noqa: C901
 
         except Exception as e:
             fail_eval(f"Failed to write evaluation artifacts: {e}")
+
+    elif args.command == "validate":
+        if not args.run_dir and not args.latest:
+            parser.error("Either --run-dir or --latest must be specified.")
+
+        run_dir_path = None
+        if args.latest:
+            run_dir_path = discover_latest_run_dir(Path(args.output_root), method=args.method, sequence=args.sequence)
+            if not run_dir_path:
+                print("Error: No run directory found for validation.", file=sys.stderr)
+                sys.exit(1)
+        else:
+            run_dir_path = Path(args.run_dir)
+
+        if not run_dir_path.exists():
+            print(f"Error: Run directory does not exist: {run_dir_path}", file=sys.stderr)
+            sys.exit(1)
+
+        results, all_passed = validate_run_directory(run_dir_path, expect_eval=not args.skip_eval)
+
+        passed_count = 0
+        for r in results:
+            prefix = "[PASS]" if r.passed else "[FAIL]"
+            print(f"{prefix} {r.check_name}: {r.message}")
+            if r.passed:
+                passed_count += 1
+
+        print(f"Validation: {passed_count}/{len(results)} checks passed.")
+
+        if not all_passed:
+            sys.exit(1)
 
 
 if __name__ == "__main__":
