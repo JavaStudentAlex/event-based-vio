@@ -22,6 +22,7 @@ class Trajectory:
     confidence: np.ndarray | None = None  # (N,)
     health: np.ndarray | None = None  # (N,) object array of PoseHealth or str
     latency_ms: np.ndarray | None = None  # (N,)
+    extra_columns: dict[str, np.ndarray] = field(default_factory=dict)  # additional per-row diagnostics
 
     def __post_init__(self) -> None:
         self._validate_core()
@@ -45,6 +46,11 @@ class Trajectory:
         self._check_len(self.confidence, n, "Confidence")
         self._check_len(self.health, n, "Health")
         self._check_len(self.latency_ms, n, "Latency")
+        for name, values in self.extra_columns.items():
+            if name == "" or name.strip() != name:
+                raise ValueError(f"Invalid extra column name: {name!r}")
+            if len(values) != n:
+                raise ValueError(f"Extra column {name} must be shape (N,)")
         if self.health is not None:
             valid_states = {h.value for h in PoseHealth}
             for i, h in enumerate(self.health):

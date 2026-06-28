@@ -15,7 +15,9 @@ from nav_benchmark.trajectory.sync import synchronize_nearest_neighbor
 
 class EvaluationError(ValueError):
     """Exception raised when evaluation preconditions fail or calculation cannot proceed."""
+
     pass
+
 
 @dataclass
 class EvalConfig:
@@ -26,6 +28,7 @@ class EvalConfig:
     outlier_rejection: str = "none"
     rpe_delta_m: float = 1.0
     drift_bin_width_m: float = 20.0
+
 
 @dataclass
 class EvaluationDiagnostics:
@@ -39,6 +42,7 @@ class EvaluationDiagnostics:
     last_matched_timestamp: float | None
     overlap_sufficiency: float
 
+
 @dataclass
 class CoverageMetrics:
     total_duration_sec: float
@@ -50,11 +54,36 @@ class CoverageMetrics:
     lost_fraction: float
     invalid_fraction: float
 
+
+@dataclass
+class RuntimeMetrics:
+    update_count: int
+    duration_sec: float
+    odometry_frequency_hz: float
+    latency_mean_ms: float | None
+    latency_median_ms: float | None
+    latency_p95_ms: float | None
+    latency_max_ms: float | None
+
+
+@dataclass
+class FailureMetrics:
+    ok_pose_count: int
+    degraded_pose_count: int
+    lost_pose_count: int
+    invalid_pose_count: int
+    failed_frame_count: int
+    failed_frame_fraction: float
+    failed_window_count: int
+    failed_duration_sec: float
+
+
 @dataclass
 class AlignmentResult:
     R: list[list[float]]
     t: list[float]
     scale: float
+
 
 @dataclass
 class MetricSummary:
@@ -73,6 +102,7 @@ class MetricSummary:
     final_drift: float
     cumulative_distance: float
 
+
 @dataclass
 class DriftBinSummary:
     bin_start: float
@@ -80,6 +110,7 @@ class DriftBinSummary:
     median_error: float | None
     iqr_error: float | None
     pose_count: int
+
 
 @dataclass
 class ErrorVsTimeRow:
@@ -91,6 +122,7 @@ class ErrorVsTimeRow:
     health: str
     association_residual: float | None
 
+
 @dataclass
 class ErrorVsDistanceRow:
     cumulative_distance: float
@@ -100,6 +132,7 @@ class ErrorVsDistanceRow:
     bin_start: float
     bin_end: float
 
+
 @dataclass
 class EvaluationResult:
     status: str
@@ -107,6 +140,8 @@ class EvaluationResult:
     config: EvalConfig
     diagnostics: EvaluationDiagnostics | None = None
     coverage: CoverageMetrics | None = None
+    runtime: RuntimeMetrics | None = None
+    failures: FailureMetrics | None = None
     alignment: AlignmentResult | None = None
     metrics: MetricSummary | None = None
     drift_bins: list[DriftBinSummary] = field(default_factory=list)
@@ -114,6 +149,7 @@ class EvaluationResult:
     error_vs_distance: list[ErrorVsDistanceRow] = field(default_factory=list)
     aligned_estimate: Trajectory | None = None
     aligned_ground_truth: Trajectory | None = None
+
 
 def read_project_csv(path: str | Path) -> Trajectory:  # noqa: C901
     """
@@ -153,7 +189,7 @@ def read_project_csv(path: str | Path) -> Trajectory:  # noqa: C901
             if not row:
                 continue
             if len(row) < len(header):
-                raise EvaluationError(f"Row {idx+2} is malformed or truncated")
+                raise EvaluationError(f"Row {idx + 2} is malformed or truncated")
 
             # Extract fields
             ts_str = row[indices["timestamp"]]
@@ -176,11 +212,19 @@ def read_project_csv(path: str | Path) -> Trajectory:  # noqa: C901
                 qz = float(qz_str)
                 qw = float(qw_str)
             except ValueError as e:
-                raise EvaluationError(f"Non-numeric value in row {idx+2}: {e}") from e
+                raise EvaluationError(f"Non-numeric value in row {idx + 2}: {e}") from e
 
-            if not (np.isfinite(ts) and np.isfinite(x) and np.isfinite(y) and np.isfinite(z) and
-                    np.isfinite(qx) and np.isfinite(qy) and np.isfinite(qz) and np.isfinite(qw)):
-                raise EvaluationError(f"Non-finite value in row {idx+2}")
+            if not (
+                np.isfinite(ts)
+                and np.isfinite(x)
+                and np.isfinite(y)
+                and np.isfinite(z)
+                and np.isfinite(qx)
+                and np.isfinite(qy)
+                and np.isfinite(qz)
+                and np.isfinite(qw)
+            ):
+                raise EvaluationError(f"Non-finite value in row {idx + 2}")
 
             timestamps.append(ts)
             if method is None:
@@ -275,6 +319,78 @@ def read_project_csv(path: str | Path) -> Trajectory:  # noqa: C901
         latency_ms=lat_arr,
     )
 
+
+def _health_labels(health: np.ndarray | None, count: int) -> np.ndarray:
+    if health is None:
+        return np.array([PoseHealth.OK.value] * count, dtype=object)
+    return np.array([str(value) for value in health], dtype=object)
+
+
+def _sample_durations(timestamps: np.ndarray) -> np.ndarray:
+    durations = np.zeros(len(timestamps), dtype=np.float64)
+    if len(timestamps) > 1:
+        durations[:-1] = np.diff(timestamps)
+        durations[-1] = durations[-2] if len(durations) > 2 else 0.0
+    return durations
+
+
+def _compute_runtime_metrics(timestamps: np.ndarray, latency_ms: np.ndarray | None) -> RuntimeMetrics:
+    duration_sec = float(timestamps[-1] - timestamps[0]) if len(timestamps) > 1 else 0.0
+    odometry_frequency_hz = float((len(timestamps) - 1) / duration_sec) if duration_sec > 0.0 else 0.0
+
+    finite_latency = np.array([], dtype=np.float64)
+    if latency_ms is not None:
+        latencies = np.asarray(latency_ms, dtype=np.float64)
+        finite_latency = latencies[np.isfinite(latencies)]
+
+    if finite_latency.size == 0:
+        latency_mean_ms = None
+        latency_median_ms = None
+        latency_p95_ms = None
+        latency_max_ms = None
+    else:
+        latency_mean_ms = float(np.mean(finite_latency))
+        latency_median_ms = float(np.median(finite_latency))
+        latency_p95_ms = float(np.percentile(finite_latency, 95))
+        latency_max_ms = float(np.max(finite_latency))
+
+    return RuntimeMetrics(
+        update_count=len(timestamps),
+        duration_sec=duration_sec,
+        odometry_frequency_hz=odometry_frequency_hz,
+        latency_mean_ms=latency_mean_ms,
+        latency_median_ms=latency_median_ms,
+        latency_p95_ms=latency_p95_ms,
+        latency_max_ms=latency_max_ms,
+    )
+
+
+def _compute_failure_metrics(health_labels: np.ndarray, durations: np.ndarray) -> FailureMetrics:
+    ok_count = int(np.sum(health_labels == PoseHealth.OK.value))
+    degraded_count = int(np.sum(health_labels == PoseHealth.DEGRADED.value))
+    lost_count = int(np.sum(health_labels == PoseHealth.LOST.value))
+    invalid_count = int(np.sum(health_labels == PoseHealth.INVALID.value))
+
+    failed_mask = np.isin(health_labels, [PoseHealth.LOST.value, PoseHealth.INVALID.value])
+    if failed_mask.size == 0:
+        failed_window_count = 0
+    else:
+        failed_window_starts = failed_mask & np.concatenate(([True], ~failed_mask[:-1]))
+        failed_window_count = int(np.sum(failed_window_starts))
+
+    failed_frame_count = int(np.sum(failed_mask))
+    return FailureMetrics(
+        ok_pose_count=ok_count,
+        degraded_pose_count=degraded_count,
+        lost_pose_count=lost_count,
+        invalid_pose_count=invalid_count,
+        failed_frame_count=failed_frame_count,
+        failed_frame_fraction=failed_frame_count / len(health_labels) if len(health_labels) > 0 else 0.0,
+        failed_window_count=failed_window_count,
+        failed_duration_sec=float(np.sum(durations[failed_mask])) if durations.size else 0.0,
+    )
+
+
 def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: EvalConfig) -> EvaluationResult:  # noqa: C901
     """
     Evaluates an estimated trajectory against a ground-truth reference trajectory.
@@ -299,17 +415,13 @@ def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: Eva
     timestamps = estimate.timestamps
     total_duration = float(timestamps[-1] - timestamps[0]) if len(timestamps) > 1 else 0.0
 
-    durations = np.zeros(len(timestamps))
-    if len(timestamps) > 1:
-        durations[:-1] = np.diff(timestamps)
-        durations[-1] = durations[-2] if len(durations) > 2 else 0.0
+    durations = _sample_durations(timestamps)
+    h_arr = _health_labels(estimate.health, len(timestamps))
 
-    h_arr = estimate.health if estimate.health is not None else np.array(["OK"] * len(timestamps), dtype=object)
-    
-    ok_dur = float(np.sum(durations[h_arr == "OK"]))
-    deg_dur = float(np.sum(durations[h_arr == "DEGRADED"]))
-    lost_dur = float(np.sum(durations[h_arr == "LOST"]))
-    inv_dur = float(np.sum(durations[h_arr == "INVALID"]))
+    ok_dur = float(np.sum(durations[h_arr == PoseHealth.OK.value]))
+    deg_dur = float(np.sum(durations[h_arr == PoseHealth.DEGRADED.value]))
+    lost_dur = float(np.sum(durations[h_arr == PoseHealth.LOST.value]))
+    inv_dur = float(np.sum(durations[h_arr == PoseHealth.INVALID.value]))
 
     cov = CoverageMetrics(
         total_duration_sec=total_duration,
@@ -321,11 +433,15 @@ def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: Eva
         lost_fraction=lost_dur / total_duration if total_duration > 0 else 0.0,
         invalid_fraction=inv_dur / total_duration if total_duration > 0 else 0.0,
     )
+    runtime = _compute_runtime_metrics(estimate.timestamps, estimate.latency_ms)
+    failures = _compute_failure_metrics(h_arr, durations)
 
     # 3. Filter estimate to only OK/DEGRADED poses
-    ok_deg_mask = np.isin(h_arr, ["OK", "DEGRADED"])
+    ok_deg_mask = np.isin(h_arr, [PoseHealth.OK.value, PoseHealth.DEGRADED.value])
     if np.sum(ok_deg_mask) < 3:
-        raise EvaluationError("Insufficient OK/DEGRADED poses in estimate trajectory (minimum 3 required for SE(3) alignment)")
+        raise EvaluationError(
+            "Insufficient OK/DEGRADED poses in estimate trajectory (minimum 3 required for SE(3) alignment)"
+        )
 
     est_ts_filt = estimate.timestamps[ok_deg_mask]
 
@@ -343,7 +459,9 @@ def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: Eva
 
     matched_count = len(matched_est_orig_idx)
     if matched_count < 3:
-        raise EvaluationError("Insufficient matched poses between estimate and reference after synchronization (minimum 3 required for SE(3) alignment)")
+        raise EvaluationError(
+            "Insufficient matched poses between estimate and reference after synchronization (minimum 3 required for SE(3) alignment)"
+        )
 
     # 5. Extract matched positions/orientations and construct evo trajectory objects
     matched_ref_positions = reference.positions[matched_ref_idx]
@@ -413,7 +531,7 @@ def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: Eva
 
     # 7. Compute ATE
     ate_errors = np.linalg.norm(matched_est_positions_aligned - matched_ref_positions, axis=1)
-    ate_rmse = float(np.sqrt(np.mean(ate_errors ** 2)))
+    ate_rmse = float(np.sqrt(np.mean(ate_errors**2)))
     ate_mean = float(np.mean(ate_errors))
     ate_median = float(np.median(ate_errors))
     ate_std = float(np.std(ate_errors))
@@ -588,8 +706,12 @@ def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: Eva
         unmatched_source_count=int(sync_diag.unmatched_source_count),
         unmatched_target_count=int(sync_diag.unmatched_target_count),
         tolerance_sec=float(sync_diag.tolerance_sec),
-        first_matched_timestamp=float(sync_diag.first_matched_timestamp) if sync_diag.first_matched_timestamp is not None else None,
-        last_matched_timestamp=float(sync_diag.last_matched_timestamp) if sync_diag.last_matched_timestamp is not None else None,
+        first_matched_timestamp=float(sync_diag.first_matched_timestamp)
+        if sync_diag.first_matched_timestamp is not None
+        else None,
+        last_matched_timestamp=float(sync_diag.last_matched_timestamp)
+        if sync_diag.last_matched_timestamp is not None
+        else None,
         overlap_sufficiency=float(sync_diag.overlap_sufficiency),
     )
 
@@ -621,6 +743,8 @@ def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: Eva
         config=config,
         diagnostics=eval_diag,
         coverage=cov,
+        runtime=runtime,
+        failures=failures,
         alignment=align_result,
         metrics=metric_summary,
         drift_bins=drift_bins,
@@ -629,6 +753,7 @@ def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: Eva
         aligned_estimate=aligned_est_trajectory,
         aligned_ground_truth=aligned_gt_trajectory,
     )
+
 
 def make_json_serializable(val: Any) -> Any:
     """Helper to convert objects/numpy types to standard JSON-compatible formats."""
@@ -646,9 +771,12 @@ def make_json_serializable(val: Any) -> Any:
         return float(val) if isinstance(val, np.floating) else int(val)
     elif isinstance(val, np.ndarray):
         return make_json_serializable(val.tolist())
+    elif isinstance(val, Path):
+        return str(val)
     elif hasattr(val, "__dataclass_fields__"):
         return make_json_serializable(asdict(val))
     return val
+
 
 def export_metrics_json(result: EvaluationResult, path: str | Path) -> None:
     """Exports metrics to a JSON file."""
@@ -657,26 +785,29 @@ def export_metrics_json(result: EvaluationResult, path: str | Path) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(serializable, f, indent=2)
 
+
 def export_error_vs_time_csv(result: EvaluationResult, path: str | Path) -> None:
     """Exports error vs time series to CSV."""
     path = Path(path)
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "timestamp",
-            "est_x",
-            "est_y",
-            "est_z",
-            "gt_aligned_x",
-            "gt_aligned_y",
-            "gt_aligned_z",
-            "error_x",
-            "error_y",
-            "error_z",
-            "error_magnitude",
-            "health",
-            "association_residual",
-        ])
+        writer.writerow(
+            [
+                "timestamp",
+                "est_x",
+                "est_y",
+                "est_z",
+                "gt_aligned_x",
+                "gt_aligned_y",
+                "gt_aligned_z",
+                "error_x",
+                "error_y",
+                "error_z",
+                "error_magnitude",
+                "health",
+                "association_residual",
+            ]
+        )
         for row in result.error_vs_time:
             # Handle optionals
             gt_x, gt_y, gt_z = row.aligned_ground_truth_xyz if row.aligned_ground_truth_xyz else ("", "", "")
@@ -684,41 +815,48 @@ def export_error_vs_time_csv(result: EvaluationResult, path: str | Path) -> None
             err_mag = f"{row.error_magnitude:.9f}" if row.error_magnitude is not None else ""
             res_val = f"{row.association_residual:.9f}" if row.association_residual is not None else ""
 
-            writer.writerow([
-                f"{row.timestamp:.9f}",
-                f"{row.estimated_xyz[0]:.9f}",
-                f"{row.estimated_xyz[1]:.9f}",
-                f"{row.estimated_xyz[2]:.9f}",
-                f"{gt_x:.9f}" if isinstance(gt_x, float) else gt_x,
-                f"{gt_y:.9f}" if isinstance(gt_y, float) else gt_y,
-                f"{gt_z:.9f}" if isinstance(gt_z, float) else gt_z,
-                f"{err_x:.9f}" if isinstance(err_x, float) else err_x,
-                f"{err_y:.9f}" if isinstance(err_y, float) else err_y,
-                f"{err_z:.9f}" if isinstance(err_z, float) else err_z,
-                err_mag,
-                row.health,
-                res_val,
-            ])
+            writer.writerow(
+                [
+                    f"{row.timestamp:.9f}",
+                    f"{row.estimated_xyz[0]:.9f}",
+                    f"{row.estimated_xyz[1]:.9f}",
+                    f"{row.estimated_xyz[2]:.9f}",
+                    f"{gt_x:.9f}" if isinstance(gt_x, float) else gt_x,
+                    f"{gt_y:.9f}" if isinstance(gt_y, float) else gt_y,
+                    f"{gt_z:.9f}" if isinstance(gt_z, float) else gt_z,
+                    f"{err_x:.9f}" if isinstance(err_x, float) else err_x,
+                    f"{err_y:.9f}" if isinstance(err_y, float) else err_y,
+                    f"{err_z:.9f}" if isinstance(err_z, float) else err_z,
+                    err_mag,
+                    row.health,
+                    res_val,
+                ]
+            )
+
 
 def export_error_vs_distance_csv(result: EvaluationResult, path: str | Path) -> None:
     """Exports error vs distance series to CSV."""
     path = Path(path)
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "cumulative_distance",
-            "error_magnitude",
-            "health",
-            "association_residual",
-            "bin_start",
-            "bin_end",
-        ])
+        writer.writerow(
+            [
+                "cumulative_distance",
+                "error_magnitude",
+                "health",
+                "association_residual",
+                "bin_start",
+                "bin_end",
+            ]
+        )
         for row in result.error_vs_distance:
-            writer.writerow([
-                f"{row.cumulative_distance:.9f}",
-                f"{row.error_magnitude:.9f}",
-                row.health,
-                f"{row.association_residual:.9f}",
-                f"{row.bin_start:.2f}",
-                f"{row.bin_end:.2f}",
-            ])
+            writer.writerow(
+                [
+                    f"{row.cumulative_distance:.9f}",
+                    f"{row.error_magnitude:.9f}",
+                    row.health,
+                    f"{row.association_residual:.9f}",
+                    f"{row.bin_start:.2f}",
+                    f"{row.bin_end:.2f}",
+                ]
+            )

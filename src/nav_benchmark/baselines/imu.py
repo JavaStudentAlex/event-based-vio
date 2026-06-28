@@ -36,6 +36,9 @@ class ImuOnlyBackend(BaseOdometryBackend):
     Inertial navigation baseline (open-loop gyro/accel integration with gravity removal).
     """
 
+    method = "imu_only"
+    required_streams = ("imu",)
+
     def run(self, sequence: MvsecSequence, *, config: ImuOnlyConfig | None = None) -> Trajectory:
         """
         Runs IMU-only propagation on the sequence.

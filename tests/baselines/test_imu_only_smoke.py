@@ -9,6 +9,7 @@ from nav_benchmark.datasets.mvsec import (
     MvsecSequence,
     SequenceMetadata,
 )
+from nav_benchmark.trajectory.export import PROJECT_TRAJECTORY_COLUMNS
 from nav_benchmark.trajectory.models import PoseHealth
 
 
@@ -40,6 +41,11 @@ def test_imu_only_smoke() -> None:
     )
 
     backend = ImuOnlyBackend()
+    descriptor = backend.describe()
+    assert descriptor.method == "imu_only"
+    assert descriptor.required_streams == ("imu",)
+    assert descriptor.output_columns == tuple(PROJECT_TRAJECTORY_COLUMNS)
+
     # Use standard gravity removal
     config = ImuOnlyConfig(
         gravity=np.array([0.0, 0.0, 9.81]),
@@ -47,7 +53,9 @@ def test_imu_only_smoke() -> None:
         lost_time_threshold=0.08,  # trigger lost state early for testing
     )
 
-    trajectory = backend.run(sequence, config=config)
+    result = backend.run_result(sequence, config=config)
+    trajectory = result.trajectory
+    assert result.config is config
 
     # Check method name
     assert trajectory.method == "imu_only"

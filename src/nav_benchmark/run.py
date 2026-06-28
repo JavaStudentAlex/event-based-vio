@@ -7,7 +7,9 @@ from pathlib import Path
 
 import numpy as np
 
+from nav_benchmark.baselines.event_imu import EventImuBackend, EventImuConfig
 from nav_benchmark.baselines.imu import ImuOnlyBackend, ImuOnlyConfig
+from nav_benchmark.baselines.visual import EventVoBackend, FeatureVoConfig, RgbVoBackend
 from nav_benchmark.datasets.mvsec import (
     IMU_DTYPE,
     Calibration,
@@ -16,21 +18,21 @@ from nav_benchmark.datasets.mvsec import (
     SequenceMetadata,
     load_mvsec_sequence,
 )
-from nav_benchmark.trajectory.export import export_project_csv, export_tum
-from nav_benchmark.trajectory.models import ExportMetadata, Trajectory
+from nav_benchmark.datasets.synthetic import load_synthetic_sequence
+from nav_benchmark.ensemble.confidence_weighted import EnsembleConfig, fuse_trajectories, write_weight_log_csv
+from nav_benchmark.evaluation.harness import (
+    evaluate_run_directory,
+    load_ground_truth_trajectory,
+    resolve_ground_truth_path,
+    write_evaluation_artifacts,
+)
 from nav_benchmark.evaluation.metrics import (
     EvalConfig,
-    evaluate_trajectory,
-    export_metrics_json,
-    export_error_vs_time_csv,
-    export_error_vs_distance_csv,
-    read_project_csv,
     make_json_serializable,
 )
-from nav_benchmark.evaluation.plots import (
-    write_trajectory_plot,
-    write_drift_over_distance_plot,
-)
+from nav_benchmark.evaluation.plots import write_ensemble_weight_plot
+from nav_benchmark.trajectory.export import export_project_csv, export_tum
+from nav_benchmark.trajectory.models import ExportMetadata, Trajectory
 
 
 def get_code_version() -> str:
@@ -112,6 +114,10 @@ def generate_failure_notes(trajectory: Trajectory, metadata: ExportMetadata) -> 
 
 def load_dataset_sequence(args, log_message) -> MvsecSequence:
     if args.dataset == "synthetic":
+        if args.input:
+            log_message(f"Loading generated synthetic sequence from {args.input}...")
+            return load_synthetic_sequence(args.input, sequence_name=args.sequence)
+
         log_message("Generating synthetic sequence data...")
         N = 100
         imu_data = np.empty(N, dtype=IMU_DTYPE)
@@ -137,42 +143,119 @@ def load_dataset_sequence(args, log_message) -> MvsecSequence:
         return load_mvsec_sequence(args.input)
 
 
-def run_estimator(args, sequence) -> tuple[Trajectory, ImuOnlyConfig]:
+def _initial_velocity_from_ground_truth(sequence: MvsecSequence) -> np.ndarray:
+    if sequence.gt_poses is None or len(sequence.gt_poses) < 2:
+        return np.array([0.0, 0.0, 0.0], dtype=np.float64)
+
+    gt = sequence.gt_poses
+    dt = float(gt["t"][1] - gt["t"][0])
+    if dt <= 0.0:
+        return np.array([0.0, 0.0, 0.0], dtype=np.float64)
+
+    first = np.array([gt["x"][0], gt["y"][0], gt["z"][0]], dtype=np.float64)
+    second = np.array([gt["x"][1], gt["y"][1], gt["z"][1]], dtype=np.float64)
+    return (second - first) / dt
+
+
+def _imu_only_config_for_sequence(args, sequence: MvsecSequence) -> ImuOnlyConfig:
+    config = ImuOnlyConfig()
+
+    gravity = np.array([0.0, 0.0, 9.81], dtype=np.float64)
+    if args.dataset == "synthetic" and args.input:
+        # Generated synthetic IMU reports accelerometer rest as -gravity.
+        gravity = np.array([0.0, 0.0, -9.81], dtype=np.float64)
+
+    initial_position = np.array([0.0, 0.0, 0.0], dtype=np.float64)
+    initial_orientation = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float64)
+    initial_velocity = np.array([0.0, 0.0, 0.0], dtype=np.float64)
+
+    if sequence.gt_poses is not None and len(sequence.gt_poses) > 0:
+        gt = sequence.gt_poses
+        initial_position = np.array([gt["x"][0], gt["y"][0], gt["z"][0]], dtype=np.float64)
+        initial_orientation = np.array([gt["qx"][0], gt["qy"][0], gt["qz"][0], gt["qw"][0]], dtype=np.float64)
+        initial_velocity = _initial_velocity_from_ground_truth(sequence)
+
+    config.gravity = gravity
+    config.initial_position = initial_position
+    config.initial_orientation = initial_orientation
+    config.initial_velocity = initial_velocity
+    return config
+
+
+def _debug_dir(run_dir: Path | None, method: str) -> Path | None:
+    if run_dir is None:
+        return None
+    return run_dir / "diagnostics" / method
+
+
+def _rgb_vo_config(run_dir: Path | None) -> FeatureVoConfig:
+    return FeatureVoConfig(scale_bias=1.01, debug_match_dir=_debug_dir(run_dir, "rgb_vo_matches"))
+
+
+def _event_vo_config(run_dir: Path | None) -> FeatureVoConfig:
+    return FeatureVoConfig(scale_bias=0.98, debug_match_dir=_debug_dir(run_dir, "event_vo_matches"))
+
+
+def run_estimator(args, sequence, run_dir: Path | None = None):
     if args.method == "imu_only":
-        config = ImuOnlyConfig()
+        config = _imu_only_config_for_sequence(args, sequence)
         backend = ImuOnlyBackend()
-        trajectory = backend.run(sequence, config=config)
-        return trajectory, config
-    else:
-        raise NotImplementedError(f"Method {args.method} is not implemented")
+        result = backend.run_result(sequence, config=config)
+        return result.trajectory, config
+    if args.method == "rgb_vo":
+        config = _rgb_vo_config(run_dir)
+        backend = RgbVoBackend()
+        result = backend.run_result(sequence, config=config)
+        return result.trajectory, config
+    if args.method == "event_vo":
+        config = _event_vo_config(run_dir)
+        backend = EventVoBackend()
+        result = backend.run_result(sequence, config=config)
+        return result.trajectory, config
+    if args.method == "event_imu":
+        config = EventImuConfig(
+            imu_config=_imu_only_config_for_sequence(args, sequence),
+            event_vo_config=_event_vo_config(run_dir),
+        )
+        backend = EventImuBackend()
+        result = backend.run_result(sequence, config=config)
+        return result.trajectory, config
+    if args.method == "ensemble":
+        baseline_trajectories = {}
+
+        imu_config = _imu_only_config_for_sequence(args, sequence)
+        baseline_trajectories["imu_only"] = ImuOnlyBackend().run(sequence, config=imu_config)
+        baseline_trajectories["rgb_vo"] = RgbVoBackend().run(sequence, config=_rgb_vo_config(run_dir))
+        baseline_trajectories["event_vo"] = EventVoBackend().run(sequence, config=_event_vo_config(run_dir))
+        event_imu_config = EventImuConfig(
+            imu_config=imu_config,
+            event_vo_config=_event_vo_config(run_dir),
+        )
+        baseline_trajectories["event_imu"] = EventImuBackend().run(sequence, config=event_imu_config)
+
+        config = EnsembleConfig()
+        trajectory = fuse_trajectories(baseline_trajectories, config=config)
+        return trajectory, {
+            "ensemble": config,
+            "input_methods": sorted(baseline_trajectories),
+            "imu_config": imu_config,
+            "event_imu_config": event_imu_config,
+        }
+    raise NotImplementedError(f"Method {args.method} is not implemented")
 
 
 def write_run_manifest(args, config, metadata, run_dir) -> dict:
     from nav_benchmark.trajectory.models import PoseHealth
 
     health_counts = {h.value: metadata.health_counts.get(h.value, 0) for h in PoseHealth}
+    serialized_config = make_json_serializable(config)
 
     run_manifest = {
         "method": args.method,
         "dataset": args.dataset,
         "sequence": args.sequence,
         "input": getattr(args, "input", None),
-        "config": {
-            "gravity": config.gravity.tolist() if hasattr(config, "gravity") else [0.0, 0.0, 9.81],
-            "initial_position": config.initial_position.tolist()
-            if hasattr(config, "initial_position")
-            else [0.0, 0.0, 0.0],
-            "initial_orientation": config.initial_orientation.tolist()
-            if hasattr(config, "initial_orientation")
-            else [0.0, 0.0, 0.0, 1.0],
-            "initial_velocity": config.initial_velocity.tolist()
-            if hasattr(config, "initial_velocity")
-            else [0.0, 0.0, 0.0],
-            "degraded_time_threshold": getattr(config, "degraded_time_threshold", 5.0),
-            "lost_time_threshold": getattr(config, "lost_time_threshold", 10.0),
-            "degraded_drift_threshold": getattr(config, "degraded_drift_threshold", 50.0),
-            "lost_drift_threshold": getattr(config, "lost_drift_threshold", 100.0),
-        },
+        "config": serialized_config,
         "timestamp_policy": metadata.timestamp_unit,
         "gravity": config.gravity.tolist() if hasattr(config, "gravity") else [0.0, 0.0, 9.81],
         "frames": {
@@ -198,7 +281,9 @@ def write_run_manifest(args, config, metadata, run_dir) -> dict:
     return run_manifest
 
 
-def discover_latest_run_dir(output_root: Path, method: str | None = None, sequence: str | None = None) -> Path | None:
+def discover_latest_run_dir(  # noqa: C901
+    output_root: Path, method: str | None = None, sequence: str | None = None
+) -> Path | None:
     if not output_root.exists():
         return None
     candidates = []
@@ -247,36 +332,7 @@ def discover_latest_run_dir(output_root: Path, method: str | None = None, sequen
 
 
 def load_ground_truth(path: Path) -> Trajectory:
-    if not path.exists():
-        raise FileNotFoundError(f"Ground truth path does not exist: {path}")
-
-    if path.suffix.lower() in [".h5", ".hdf5"]:
-        sequence = load_mvsec_sequence(path)
-        if sequence.gt_poses is None or len(sequence.gt_poses) == 0:
-            raise ValueError(f"No ground-truth poses found in MVSEC file: {path}")
-
-        gt_poses = sequence.gt_poses
-        N = len(gt_poses)
-        from nav_benchmark.trajectory.models import PoseHealth
-
-        positions = np.stack([gt_poses["x"], gt_poses["y"], gt_poses["z"]], axis=1)
-        orientations = np.stack([gt_poses["qx"], gt_poses["qy"], gt_poses["qz"], gt_poses["qw"]], axis=1)
-
-        return Trajectory(
-            timestamps=gt_poses["t"],
-            method="ground_truth",
-            positions=positions,
-            orientations=orientations,
-            velocities=np.zeros((N, 3)),
-            confidence=np.ones(N),
-            health=np.array([PoseHealth.OK.value] * N, dtype=object),
-            latency_ms=np.zeros(N),
-        )
-    else:
-        try:
-            return read_project_csv(path)
-        except Exception as e:
-            raise ValueError(f"Failed to read ground truth from CSV: {e}") from e
+    return load_ground_truth_trajectory(path)
 
 
 def write_failed_evaluation_artifacts(run_dir: Path, reason: str, config: EvalConfig) -> None:
@@ -295,6 +351,8 @@ def write_failed_evaluation_artifacts(run_dir: Path, reason: str, config: EvalCo
         },
         "diagnostics": None,
         "coverage": None,
+        "runtime": None,
+        "failures": None,
         "alignment": None,
         "metrics": None,
         "drift_bins": [],
@@ -308,29 +366,54 @@ def write_failed_evaluation_artifacts(run_dir: Path, reason: str, config: EvalCo
 
     with open(run_dir / "ground_truth_aligned.csv", "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "timestamp", "method", "x", "y", "z", "qx", "qy", "qz", "qw",
-            "vx", "vy", "vz", "confidence", "health", "latency_ms"
-        ])
+        writer.writerow(
+            [
+                "timestamp",
+                "method",
+                "x",
+                "y",
+                "z",
+                "qx",
+                "qy",
+                "qz",
+                "qw",
+                "vx",
+                "vy",
+                "vz",
+                "confidence",
+                "health",
+                "latency_ms",
+            ]
+        )
 
     with open(run_dir / "error_vs_time.csv", "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "timestamp", "est_x", "est_y", "est_z",
-            "gt_aligned_x", "gt_aligned_y", "gt_aligned_z",
-            "error_x", "error_y", "error_z", "error_magnitude",
-            "health", "association_residual"
-        ])
+        writer.writerow(
+            [
+                "timestamp",
+                "est_x",
+                "est_y",
+                "est_z",
+                "gt_aligned_x",
+                "gt_aligned_y",
+                "gt_aligned_z",
+                "error_x",
+                "error_y",
+                "error_z",
+                "error_magnitude",
+                "health",
+                "association_residual",
+            ]
+        )
 
     with open(run_dir / "error_vs_distance.csv", "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "cumulative_distance", "error_magnitude", "health",
-            "association_residual", "bin_start", "bin_end"
-        ])
+        writer.writerow(
+            ["cumulative_distance", "error_magnitude", "health", "association_residual", "bin_start", "bin_end"]
+        )
 
 
-def main() -> None:
+def main() -> None:  # noqa: C901
     parser = argparse.ArgumentParser(description="Visual-Inertial Navigation Benchmark Runner")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -339,7 +422,7 @@ def main() -> None:
     run_parser.add_argument(
         "--method",
         required=True,
-        choices=["imu_only"],
+        choices=["imu_only", "rgb_vo", "event_vo", "event_imu", "ensemble"],
         help="Estimation method to run",
     )
     run_parser.add_argument(
@@ -466,20 +549,31 @@ def main() -> None:
 
             # 2. Run backend estimation
             log_message("Running baseline estimator...")
-            trajectory, config = run_estimator(args, sequence)
+            trajectory, config = run_estimator(args, sequence, run_dir=run_dir)
 
             # 3. Export trajectory artifacts
             log_message("Exporting trajectory artifacts...")
             csv_path = run_dir / "estimated_trajectory.csv"
             tum_path = run_dir / "estimated_trajectory_tum.txt"
 
-            metadata = ExportMetadata(
-                source_frame="imu",
-                target_frame="world",
-            )
+            source_frame = "camera" if args.method in {"rgb_vo", "event_vo"} else "imu"
+            metadata = ExportMetadata(source_frame=source_frame, target_frame="world")
 
             export_project_csv(trajectory, csv_path, metadata)
             export_tum(trajectory, tum_path, metadata)
+            if trajectory.method == "ensemble":
+                weight_path = run_dir / "ensemble_weights.csv"
+                write_weight_log_csv(trajectory, weight_path)
+                log_message(f"Exported ensemble weights to {weight_path}")
+                try:
+                    write_ensemble_weight_plot(
+                        trajectory,
+                        run_dir / "ensemble_weights",
+                        sequence=args.sequence,
+                    )
+                    log_message(f"Exported ensemble weight plot to {run_dir / 'ensemble_weights.png'}")
+                except Exception as plot_err:
+                    log_message(f"WARNING: failed to write ensemble weight plot: {plot_err}")
 
             log_message(f"Exported project CSV to {csv_path}")
             log_message(f"Exported TUM format to {tum_path}")
@@ -506,11 +600,7 @@ def main() -> None:
         # Determine run directory
         run_dir_path = None
         if args.latest:
-            run_dir_path = discover_latest_run_dir(
-                Path(args.output_root),
-                method=args.method,
-                sequence=args.sequence
-            )
+            run_dir_path = discover_latest_run_dir(Path(args.output_root), method=args.method, sequence=args.sequence)
             if not run_dir_path:
                 print("Error: No run directory found for evaluation.", file=sys.stderr)
                 sys.exit(1)
@@ -540,7 +630,7 @@ def main() -> None:
                 manifest_path = run_dir_path / "run_manifest.json"
                 if manifest_path.exists():
                     try:
-                        with open(manifest_path, "r", encoding="utf-8") as f:
+                        with open(manifest_path, encoding="utf-8") as f:
                             manifest = json.load(f)
                         manifest["evaluation"] = {
                             "status": "failed",
@@ -560,98 +650,43 @@ def main() -> None:
         if not est_traj_path.exists():
             fail_eval(f"Estimated trajectory not found: {est_traj_path}")
 
-        # 2. Resolve ground truth
-        gt_path_str = None
-        if args.ground_truth:
-            gt_path_str = args.ground_truth
-        else:
-            # Try to resolve from run_manifest.json
-            manifest_path = run_dir_path / "run_manifest.json"
-            if manifest_path.exists():
-                try:
-                    with open(manifest_path, "r", encoding="utf-8") as f:
-                        manifest = json.load(f)
-                    gt_path_str = manifest.get("input")
-                except Exception as manifest_err:
-                    fail_eval(f"Failed to read input path from run_manifest.json: {manifest_err}")
-
-            if not gt_path_str:
-                fail_eval("Ground truth path not specified and could not be resolved from run_manifest.json")
-
-        gt_path = Path(gt_path_str)
-        if not gt_path.exists():
-            fail_eval(f"Ground truth file not found: {gt_path}")
-
+        # 2. Resolve and load ground truth up front for clear diagnostics.
         try:
-            estimate = read_project_csv(est_traj_path)
+            gt_path = resolve_ground_truth_path(run_dir_path, args.ground_truth)
         except Exception as e:
-            fail_eval(f"Failed to read estimated trajectory: {e}")
+            fail_eval(str(e))
 
-        # 3. Load ground truth
         try:
             ground_truth = load_ground_truth(gt_path)
         except Exception as e:
             fail_eval(f"Failed to load ground truth trajectory: {e}")
 
-        # 4. Evaluate trajectory
+        # 3. Evaluate trajectory without writing artifacts, then write through the shared harness.
         try:
-            result = evaluate_trajectory(estimate, ground_truth, eval_cfg)
+            harness_result = evaluate_run_directory(
+                run_dir_path,
+                ground_truth_path=gt_path,
+                eval_config=eval_cfg,
+                sequence=args.sequence or ground_truth.method,
+                write_artifacts=False,
+            )
+            result = harness_result.result
         except Exception as e:
             fail_eval(f"Trajectory evaluation failed: {e}")
 
-        # 5. Write artifacts
         try:
-            # metrics.json
-            export_metrics_json(result, run_dir_path / "metrics.json")
-
-            # error_vs_time.csv
-            export_error_vs_time_csv(result, run_dir_path / "error_vs_time.csv")
-
-            # error_vs_distance.csv
-            export_error_vs_distance_csv(result, run_dir_path / "error_vs_distance.csv")
-
-            # ground_truth_aligned.csv
-            if result.aligned_ground_truth:
-                export_project_csv(
-                    result.aligned_ground_truth,
-                    run_dir_path / "ground_truth_aligned.csv",
-                    ExportMetadata(
-                        source_frame="gt",
-                        target_frame="world",
-                    )
-                )
-            else:
-                # write empty ground_truth_aligned.csv
-                with open(run_dir_path / "ground_truth_aligned.csv", "w", newline="", encoding="utf-8") as f:
-                    writer = csv.writer(f)
-                    writer.writerow([
-                        "timestamp", "method", "x", "y", "z", "qx", "qy", "qz", "qw",
-                        "vx", "vy", "vz", "confidence", "health", "latency_ms"
-                    ])
-
-            # Plots: trajectory and drift
-            seq_name = getattr(args, "sequence", None) or ground_truth.method
-            write_trajectory_plot(
+            write_evaluation_artifacts(
                 result,
-                run_dir_path / "trajectory_plot",
-                sequence=seq_name,
-                title=f"Trajectory: {estimate.method} vs Ground Truth",
+                run_dir_path,
+                sequence=args.sequence or ground_truth.method,
+                warn=lambda message: print(f"Warning: {message}", file=sys.stderr),
             )
-            try:
-                write_drift_over_distance_plot(
-                    result,
-                    run_dir_path / "drift_plot",
-                    sequence=seq_name,
-                    title=f"Drift over Distance: {estimate.method}",
-                )
-            except Exception as plot_err:
-                print(f"Warning: Drift plotting skipped or failed: {plot_err}", file=sys.stderr)
 
             # Update run_manifest.json with success block
             manifest_path = run_dir_path / "run_manifest.json"
             if manifest_path.exists():
                 try:
-                    with open(manifest_path, "r", encoding="utf-8") as f:
+                    with open(manifest_path, encoding="utf-8") as f:
                         manifest = json.load(f)
 
                     # Convert metrics and other fields to serializable form
@@ -660,6 +695,8 @@ def main() -> None:
                         "status": "success",
                         "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                         "metrics": ser_metrics,
+                        "runtime": make_json_serializable(result.runtime),
+                        "failures": make_json_serializable(result.failures),
                     }
                     with open(manifest_path, "w", encoding="utf-8") as f:
                         json.dump(manifest, f, indent=4)

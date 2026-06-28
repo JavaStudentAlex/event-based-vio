@@ -1,3 +1,5 @@
+import csv
+import json
 import os
 import subprocess
 import sys
@@ -7,6 +9,45 @@ from unittest import mock
 import pytest
 
 from nav_benchmark.run import main
+
+
+def _write_generated_sequence(root: Path) -> None:
+    (root / "imu").mkdir(parents=True)
+    (root / "ground_truth").mkdir(parents=True)
+
+    with open(root / "imu" / "imu.csv", "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["timestamp_s", "ax_mps2", "ay_mps2", "az_mps2", "gx_radps", "gy_radps", "gz_radps"])
+        for t in range(6):
+            writer.writerow([float(t), 0.0, 0.0, -9.81, 0.0, 0.0, 0.0])
+
+    with open(root / "ground_truth" / "trajectory.csv", "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            [
+                "timestamp_s",
+                "x_m",
+                "y_m",
+                "z_m",
+                "yaw_deg",
+                "qx",
+                "qy",
+                "qz",
+                "qw",
+                "vx_mps",
+                "vy_mps",
+                "vz_mps",
+            ]
+        )
+        rows = [
+            [0.0, 0.0, 0.0, 100.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0, 100.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0],
+            [2.0, 2.0, 0.0, 100.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0],
+            [3.0, 2.0, 1.0, 100.0, 90.0, 0.0, 0.0, 0.70710678, 0.70710678, 0.0, 1.0, 0.0],
+            [4.0, 2.0, 2.0, 100.0, 90.0, 0.0, 0.0, 0.70710678, 0.70710678, 0.0, 1.0, 0.0],
+            [5.0, 2.0, 2.0, 101.0, 90.0, 0.0, 0.0, 0.70710678, 0.70710678, 0.0, 0.0, 1.0],
+        ]
+        writer.writerows(rows)
 
 
 def test_cli_entrypoint_subprocess(tmp_path):
@@ -56,6 +97,62 @@ def test_cli_entrypoint_subprocess(tmp_path):
     assert "[FINISHED]" in log_content
     assert "Method: imu_only" in log_content
     assert "Dataset: synthetic" in log_content
+
+
+def test_cli_run_and_eval_generated_synthetic_sequence(tmp_path):
+    sequence_dir = tmp_path / "generated_sequence"
+    _write_generated_sequence(sequence_dir)
+    output_root = tmp_path / "runs"
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).parent.parent.parent / "src")
+
+    run_cmd = [
+        sys.executable,
+        "-m",
+        "nav_benchmark.run",
+        "run",
+        "--method",
+        "imu_only",
+        "--dataset",
+        "synthetic",
+        "--sequence",
+        "generated_seq",
+        "--input",
+        str(sequence_dir),
+        "--output-root",
+        str(output_root),
+    ]
+    run_res = subprocess.run(run_cmd, env=env, capture_output=True, text=True)
+    assert run_res.returncode == 0, f"stdout: {run_res.stdout}\nstderr: {run_res.stderr}"
+
+    run_dirs = list(output_root.glob("*_imu_only_generated_seq"))
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+    with open(run_dir / "run_manifest.json", encoding="utf-8") as f:
+        manifest = json.load(f)
+    assert manifest["input"] == str(sequence_dir)
+    assert manifest["config"]["gravity"] == [0.0, 0.0, -9.81]
+    assert manifest["config"]["initial_position"] == [0.0, 0.0, 100.0]
+
+    eval_cmd = [
+        sys.executable,
+        "-m",
+        "nav_benchmark.run",
+        "eval",
+        "--run-dir",
+        str(run_dir),
+        "--alignment-policy",
+        "none",
+    ]
+    eval_res = subprocess.run(eval_cmd, env=env, capture_output=True, text=True)
+    assert eval_res.returncode == 0, f"stdout: {eval_res.stdout}\nstderr: {eval_res.stderr}"
+
+    with open(run_dir / "metrics.json", encoding="utf-8") as f:
+        metrics = json.load(f)
+    assert metrics["status"] == "OK"
+    assert metrics["runtime"]["update_count"] == 6
+    assert metrics["failures"]["failed_frame_count"] == 0
 
 
 def test_cli_main_direct(tmp_path):

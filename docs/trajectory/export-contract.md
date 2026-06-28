@@ -69,3 +69,30 @@ class ExportMetadata:
 ### Diagnostic Tracking
 - **`health_counts`**: Tracks the frequency of each `PoseHealth` state in the final trajectory to assess tracker reliability over the entire run.
 - **`tum_filtered_rows`**: Tracks how many bad poses were omitted from evaluation to ensure tracking failure rates are reported accurately in the final benchmark.
+
+---
+
+## 4. Generated Synthetic Ground Truth Input
+
+Estimator outputs still must use the project trajectory CSV schema above. The
+evaluation harness also accepts generated synthetic ground truth at:
+
+```text
+ground_truth/trajectory.csv
+```
+
+with the recorder schema:
+
+```text
+timestamp_s,x_m,y_m,z_m,yaw_deg,qx,qy,qz,qw,vx_mps,vy_mps,vz_mps
+```
+
+For task-level fixtures, the harness can also read the compact ground-truth
+shape:
+
+```text
+t,x,y,z,qx,qy,qz,qw,vx,vy,vz,confidence
+```
+
+These compatibility formats are inputs only; they are normalized into the
+canonical `Trajectory` model before evaluation.

@@ -1,11 +1,13 @@
 from pathlib import Path
 
 import matplotlib
+import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from nav_benchmark.evaluation.metrics import EvaluationResult
+from nav_benchmark.trajectory.models import Trajectory
 
 
 class PlottingError(ValueError):
@@ -204,5 +206,97 @@ def write_drift_over_distance_plot(
         fig.savefig(svg_path)
     except Exception as e:
         raise PlottingError(f"Failed to save drift plot files: {e}") from e
+    finally:
+        plt.close(fig)
+
+
+def write_trajectory_comparison_plot(
+    trajectories: dict[str, Trajectory],
+    ground_truth: Trajectory,
+    output_path: str | Path,
+    sequence: str | None = None,
+    title: str | None = None,
+) -> None:
+    """Write a multi-method XY trajectory comparison plot."""
+    if not trajectories:
+        raise PlottingError("At least one trajectory is required for comparison plotting")
+    if len(ground_truth.timestamps) == 0:
+        raise PlottingError("Ground-truth trajectory is empty")
+
+    path = Path(output_path)
+    png_path = path.with_suffix(".png")
+    svg_path = path.with_suffix(".svg")
+    png_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(9, 7))
+    gt_pos = ground_truth.positions
+    ax.plot(gt_pos[:, 0], gt_pos[:, 1], label="Ground Truth", color="black", linestyle="--", linewidth=1.8)
+
+    for method, trajectory in trajectories.items():
+        if len(trajectory.timestamps) == 0:
+            continue
+        pos = trajectory.positions
+        ax.plot(pos[:, 0], pos[:, 1], label=method, linewidth=1.3)
+
+    ax.scatter(gt_pos[0, 0], gt_pos[0, 1], color="green", marker="o", s=70, label="Start", zorder=5)
+    ax.scatter(gt_pos[-1, 0], gt_pos[-1, 1], color="red", marker="x", s=70, label="End", zorder=5)
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xlabel("X [m]")
+    ax.set_ylabel("Y [m]")
+    ax.grid(True, linestyle=":", alpha=0.6)
+
+    title_parts = [title or "Trajectory Comparison"]
+    if sequence:
+        title_parts.append(f"Sequence: {sequence}")
+    ax.set_title("\n".join(title_parts))
+    ax.legend()
+    fig.tight_layout()
+
+    try:
+        fig.savefig(png_path, dpi=300)
+        fig.savefig(svg_path)
+    except Exception as e:
+        raise PlottingError(f"Failed to save trajectory comparison plot files: {e}") from e
+    finally:
+        plt.close(fig)
+
+
+def write_ensemble_weight_plot(
+    ensemble: Trajectory,
+    output_path: str | Path,
+    sequence: str | None = None,
+    title: str | None = None,
+) -> None:
+    """Plot logged confidence-fusion weights from an ensemble trajectory."""
+    weight_columns = [name for name in ("w_imu", "w_rgb", "w_event", "w_event_imu") if name in ensemble.extra_columns]
+    if not weight_columns:
+        raise PlottingError("Ensemble trajectory has no weight columns to plot")
+
+    path = Path(output_path)
+    png_path = path.with_suffix(".png")
+    svg_path = path.with_suffix(".svg")
+    png_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    t = np.asarray(ensemble.timestamps, dtype=np.float64)
+    for column in weight_columns:
+        ax.plot(t, ensemble.extra_columns[column], label=column, linewidth=1.5)
+
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Normalized Fusion Weight")
+    ax.set_ylim(-0.02, 1.02)
+    ax.grid(True, linestyle=":", alpha=0.6)
+    title_parts = [title or "Ensemble Weights"]
+    if sequence:
+        title_parts.append(f"Sequence: {sequence}")
+    ax.set_title("\n".join(title_parts))
+    ax.legend()
+    fig.tight_layout()
+
+    try:
+        fig.savefig(png_path, dpi=300)
+        fig.savefig(svg_path)
+    except Exception as e:
+        raise PlottingError(f"Failed to save ensemble weight plot files: {e}") from e
     finally:
         plt.close(fig)

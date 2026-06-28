@@ -5,11 +5,19 @@ This document describes how to run navigation baselines using the `nav_benchmark
 ## Invocation Examples
 
 ### 1. Synthetic Dataset
-To run the `imu_only` baseline on synthetic data:
+To run the `imu_only` baseline on deterministic in-memory synthetic IMU data:
 ```bash
 python -m nav_benchmark.run run --method imu_only --dataset synthetic --sequence synthetic_seq
 ```
-*Note: For the synthetic dataset, `--sequence` is required but generates a deterministic synthetic path, and `--input` is not needed.*
+
+To run it on a generated synthetic sequence directory from the recorder:
+```bash
+python -m nav_benchmark.run run --method imu_only --dataset synthetic --sequence synthetic_seq --input path/to/generated_sequence
+```
+
+The generated sequence layout must contain `imu/imu.csv`. When
+`ground_truth/trajectory.csv` is present, the IMU baseline initializes from the
+first ground-truth pose and velocity.
 
 ### 2. MVSEC Dataset
 To run the `imu_only` baseline on a real MVSEC HDF5 dataset sequence (e.g., `outdoor_day1`):
@@ -28,7 +36,7 @@ The `run` subcommand supports the following arguments:
   * `synthetic`: Deterministic mock IMU data.
   * `mvsec`: Real MVSEC dataset.
 * `--sequence` (required): A descriptive name for the sequence being processed.
-* `--input` (required for `mvsec`): Path to the input HDF5 data file.
+* `--input` (required for `mvsec`, optional for `synthetic`): Path to the input HDF5 data file or generated synthetic sequence directory.
 * `--output-root` (optional, default: `runs`): The directory where all run folders will be generated.
 * `--resume` (optional): If present, automatically handles existing run folder collisions by appending suffix increments (e.g., `-r1`, `-r2`).
 
@@ -46,6 +54,22 @@ runs/20260628_120000_imu_only_outdoor_day1/
 ├── run_manifest.json            # Configuration and metadata parameters
 └── failure_notes.md             # Summary of tracking state and degraded/lost tracking intervals
 ```
+
+## Evaluation
+
+To evaluate a completed run:
+```bash
+python -m nav_benchmark.run eval --run-dir runs/20260628_120000_imu_only_outdoor_day1 --ground-truth path/to/ground_truth.csv
+```
+
+If `--ground-truth` is omitted, the evaluator reads `run_manifest.json`. For a
+generated synthetic sequence directory recorded as `input`, it automatically
+uses `input/ground_truth/trajectory.csv`.
+
+Evaluation writes `metrics.json`, `error_vs_time.csv`,
+`error_vs_distance.csv`, `ground_truth_aligned.csv`, `trajectory_plot.{png,svg}`,
+and `drift_plot.{png,svg}`. `metrics.json` includes trajectory error, drift,
+runtime latency/frequency, and failed-frame/window counts.
 
 ### Manifest Details
 `run_manifest.json` contains:

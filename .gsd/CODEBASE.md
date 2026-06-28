@@ -1,7 +1,7 @@
 # Codebase Map
 
-Generated: 2026-06-28T05:57:03Z | Files: 72 | Described: 0/72
-<!-- gsd:codebase-meta {"generatedAt":"2026-06-28T05:57:03Z","fingerprint":"5467cd3f60d6f7d76443fa895d33f184284555a6","fileCount":72,"truncated":false} -->
+Generated: 2026-06-28T07:18:44Z | Files: 98 | Described: 0/98
+<!-- gsd:codebase-meta {"generatedAt":"2026-06-28T07:18:44Z","fingerprint":"bd4c1f4f6434f32c48505268f57189003db115dd","fileCount":98,"truncated":false} -->
 
 ### (root)/
 - `.gitignore`
@@ -63,6 +63,9 @@ Generated: 2026-06-28T05:57:03Z | Files: 72 | Described: 0/72
 - `.github/workflows/jules_auto_merge.yml`
 - `.github/workflows/jules_next_task.yml`
 
+### configs/
+- `configs/google_earth_sequence.yaml`
+
 ### docs/datasets/
 - `docs/datasets/mvsec.md`
 
@@ -96,6 +99,22 @@ Generated: 2026-06-28T05:57:03Z | Files: 72 | Described: 0/72
 - `src/nav_benchmark/evaluation/metrics.py`
 - `src/nav_benchmark/evaluation/plots.py`
 
+### src/nav_benchmark/synthetic/
+- `src/nav_benchmark/synthetic/__init__.py`
+- `src/nav_benchmark/synthetic/config.py`
+- `src/nav_benchmark/synthetic/drone_model.py`
+- `src/nav_benchmark/synthetic/event_visualizer.py`
+- `src/nav_benchmark/synthetic/frame_source.py`
+- `src/nav_benchmark/synthetic/geo.py`
+- `src/nav_benchmark/synthetic/imageio.py`
+- `src/nav_benchmark/synthetic/imu_from_trajectory.py`
+- `src/nav_benchmark/synthetic/metadata_writer.py`
+- `src/nav_benchmark/synthetic/pipeline.py`
+- `src/nav_benchmark/synthetic/preview.py`
+- `src/nav_benchmark/synthetic/recorder.py`
+- `src/nav_benchmark/synthetic/rgb_to_events.py`
+- `src/nav_benchmark/synthetic/trajectory_export.py`
+
 ### src/nav_benchmark/trajectory/
 - `src/nav_benchmark/trajectory/__init__.py`
 - `src/nav_benchmark/trajectory/export.py`
@@ -104,15 +123,18 @@ Generated: 2026-06-28T05:57:03Z | Files: 72 | Described: 0/72
 
 ### tests/
 - `tests/__init__.py`
+- `tests/conftest.py`
 
 ### tests/baselines/
 - `tests/baselines/test_imu_only_smoke.py`
 
 ### tests/cli/
+- `tests/cli/test_eval_cli_synthetic.py`
 - `tests/cli/test_run_cli_synthetic.py`
 - `tests/cli/test_run_manifest_and_notes.py`
 
 ### tests/evaluation/
+- `tests/evaluation/test_eval_artifact_contract_synthetic.py`
 - `tests/evaluation/test_metrics_synthetic.py`
 - `tests/evaluation/test_plots_synthetic.py`
 
@@ -123,8 +145,20 @@ Generated: 2026-06-28T05:57:03Z | Files: 72 | Described: 0/72
 - `tests/nav_benchmark/datasets/__init__.py`
 - `tests/nav_benchmark/datasets/test_mvsec.py`
 
+### tests/synthetic/
+- `tests/synthetic/test_geo.py`
+- `tests/synthetic/test_imu_from_trajectory.py`
+- `tests/synthetic/test_recorder.py`
+- `tests/synthetic/test_rgb_to_events.py`
+
 ### tests/trajectory/
 - `tests/trajectory/test_export_contract_synthetic.py`
 - `tests/trajectory/test_export.py`
 - `tests/trajectory/test_models.py`
 - `tests/trajectory/test_sync.py`
+
+### tools/
+- `tools/build_events_from_rgb.py`
+- `tools/preview_sequence.py`
+- `tools/record_google_earth_sequence.py`
+- `tools/validate_sequence.py`

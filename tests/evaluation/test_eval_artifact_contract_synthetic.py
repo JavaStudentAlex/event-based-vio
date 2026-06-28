@@ -1,19 +1,16 @@
 import csv
 import json
-from pathlib import Path
+
 import numpy as np
-import pytest
 
 from nav_benchmark.evaluation.metrics import (
     EvalConfig,
     evaluate_trajectory,
-    export_metrics_json,
-    export_error_vs_time_csv,
     export_error_vs_distance_csv,
-    read_project_csv,
+    export_error_vs_time_csv,
+    export_metrics_json,
 )
 from nav_benchmark.trajectory.models import PoseHealth, Trajectory
-from nav_benchmark.trajectory.export import export_project_csv
 
 
 def test_evaluation_artifact_contracts(tmp_path):
@@ -24,28 +21,31 @@ def test_evaluation_artifact_contracts(tmp_path):
     # Create synthetic trajectory estimate and ground truth
     timestamps = np.array([100.0, 101.0, 102.0, 103.0, 104.0, 105.0])
     # Estimate has some drift
-    est_positions = np.array([
-        [0.0, 0.0, 0.0],
-        [1.0, 0.1, 0.0],
-        [2.0, 0.8, 0.1],
-        [3.0, 0.9, 0.3],
-        [4.0, 1.4, 0.6],
-        [5.0, 1.5, 1.0],
-    ])
+    est_positions = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.1, 0.0],
+            [2.0, 0.8, 0.1],
+            [3.0, 0.9, 0.3],
+            [4.0, 1.4, 0.6],
+            [5.0, 1.5, 1.0],
+        ]
+    )
     # Ground truth uses a non-collinear 3D path so SE(3) alignment is well-conditioned.
-    gt_positions = np.array([
-        [0.0, 0.0, 0.0],
-        [1.0, 0.0, 0.0],
-        [2.0, 0.6, 0.0],
-        [3.0, 0.6, 0.2],
-        [4.0, 1.0, 0.4],
-        [5.0, 1.0, 0.8],
-    ])
+    gt_positions = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [2.0, 0.6, 0.0],
+            [3.0, 0.6, 0.2],
+            [4.0, 1.0, 0.4],
+            [5.0, 1.0, 0.8],
+        ]
+    )
     orientations = np.array([[0.0, 0.0, 0.0, 1.0]] * 6)
-    health = np.array([
-        PoseHealth.OK, PoseHealth.OK, PoseHealth.DEGRADED,
-        PoseHealth.DEGRADED, PoseHealth.LOST, PoseHealth.LOST
-    ])
+    health = np.array(
+        [PoseHealth.OK, PoseHealth.OK, PoseHealth.DEGRADED, PoseHealth.DEGRADED, PoseHealth.LOST, PoseHealth.LOST]
+    )
 
     estimate = Trajectory(
         timestamps=timestamps,
@@ -70,7 +70,7 @@ def test_evaluation_artifact_contracts(tmp_path):
     export_metrics_json(res, metrics_json_path)
     assert metrics_json_path.exists()
 
-    with open(metrics_json_path, "r") as f:
+    with open(metrics_json_path) as f:
         metrics_data = json.load(f)
 
     assert metrics_data["status"] == "OK"
@@ -100,16 +100,25 @@ def test_evaluation_artifact_contracts(tmp_path):
     export_error_vs_time_csv(res, evt_path)
     assert evt_path.exists()
 
-    with open(evt_path, "r", newline="", encoding="utf-8") as f:
+    with open(evt_path, newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
         header = next(reader)
         rows = list(reader)
 
     expected_evt_header = [
-        "timestamp", "est_x", "est_y", "est_z",
-        "gt_aligned_x", "gt_aligned_y", "gt_aligned_z",
-        "error_x", "error_y", "error_z", "error_magnitude",
-        "health", "association_residual"
+        "timestamp",
+        "est_x",
+        "est_y",
+        "est_z",
+        "gt_aligned_x",
+        "gt_aligned_y",
+        "gt_aligned_z",
+        "error_x",
+        "error_y",
+        "error_z",
+        "error_magnitude",
+        "health",
+        "association_residual",
     ]
     assert header == expected_evt_header
     assert len(rows) == len(timestamps)
@@ -124,13 +133,17 @@ def test_evaluation_artifact_contracts(tmp_path):
     export_error_vs_distance_csv(res, evd_path)
     assert evd_path.exists()
 
-    with open(evd_path, "r", newline="", encoding="utf-8") as f:
+    with open(evd_path, newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
         header = next(reader)
         rows = list(reader)
 
     expected_evd_header = [
-        "cumulative_distance", "error_magnitude", "health",
-        "association_residual", "bin_start", "bin_end"
+        "cumulative_distance",
+        "error_magnitude",
+        "health",
+        "association_residual",
+        "bin_start",
+        "bin_end",
     ]
     assert header == expected_evd_header

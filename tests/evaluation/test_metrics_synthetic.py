@@ -21,10 +21,25 @@ def test_read_project_csv_valid(tmp_path):
     csv_path = tmp_path / "valid_traj.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "timestamp", "method", "x", "y", "z", "qx", "qy", "qz", "qw",
-            "vx", "vy", "vz", "confidence", "health", "latency_ms"
-        ])
+        writer.writerow(
+            [
+                "timestamp",
+                "method",
+                "x",
+                "y",
+                "z",
+                "qx",
+                "qy",
+                "qz",
+                "qw",
+                "vx",
+                "vy",
+                "vz",
+                "confidence",
+                "health",
+                "latency_ms",
+            ]
+        )
         writer.writerow([100.0, "imu_only", 1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0, 0.1, 0.2, 0.3, 0.9, "OK", 5.0])
         writer.writerow([100.1, "imu_only", 1.1, 2.1, 3.1, 0.0, 0.0, 0.0, 1.0, 0.1, 0.2, 0.3, 0.8, "DEGRADED", 6.0])
 
@@ -53,10 +68,25 @@ def test_read_project_csv_non_finite(tmp_path):
     csv_path = tmp_path / "non_finite.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "timestamp", "method", "x", "y", "z", "qx", "qy", "qz", "qw",
-            "vx", "vy", "vz", "confidence", "health", "latency_ms"
-        ])
+        writer.writerow(
+            [
+                "timestamp",
+                "method",
+                "x",
+                "y",
+                "z",
+                "qx",
+                "qy",
+                "qz",
+                "qw",
+                "vx",
+                "vy",
+                "vz",
+                "confidence",
+                "health",
+                "latency_ms",
+            ]
+        )
         writer.writerow([100.0, "imu_only", float("nan"), 2.0, 3.0, 0.0, 0.0, 0.0, 1.0, 0.1, 0.2, 0.3, 0.9, "OK", 5.0])
 
     with pytest.raises(EvaluationError, match="Non-finite value"):
@@ -67,10 +97,25 @@ def test_read_project_csv_non_monotonic(tmp_path):
     csv_path = tmp_path / "non_monotonic.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "timestamp", "method", "x", "y", "z", "qx", "qy", "qz", "qw",
-            "vx", "vy", "vz", "confidence", "health", "latency_ms"
-        ])
+        writer.writerow(
+            [
+                "timestamp",
+                "method",
+                "x",
+                "y",
+                "z",
+                "qx",
+                "qy",
+                "qz",
+                "qw",
+                "vx",
+                "vy",
+                "vz",
+                "confidence",
+                "health",
+                "latency_ms",
+            ]
+        )
         writer.writerow([100.0, "imu_only", 1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0, 0.1, 0.2, 0.3, 0.9, "OK", 5.0])
         writer.writerow([99.9, "imu_only", 1.1, 2.1, 3.1, 0.0, 0.0, 0.0, 1.0, 0.1, 0.2, 0.3, 0.8, "OK", 6.0])
 
@@ -82,10 +127,25 @@ def test_read_project_csv_invalid_health(tmp_path):
     csv_path = tmp_path / "invalid_health.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "timestamp", "method", "x", "y", "z", "qx", "qy", "qz", "qw",
-            "vx", "vy", "vz", "confidence", "health", "latency_ms"
-        ])
+        writer.writerow(
+            [
+                "timestamp",
+                "method",
+                "x",
+                "y",
+                "z",
+                "qx",
+                "qy",
+                "qz",
+                "qw",
+                "vx",
+                "vy",
+                "vz",
+                "confidence",
+                "health",
+                "latency_ms",
+            ]
+        )
         writer.writerow([100.0, "imu_only", 1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0, 0.1, 0.2, 0.3, 0.9, "UNKNOWN", 5.0])
 
     with pytest.raises(EvaluationError, match="Invalid health value"):
@@ -95,10 +155,7 @@ def test_read_project_csv_invalid_health(tmp_path):
 def test_evaluate_trajectory_perfect_alignment():
     # 4 points forming a non-collinear shape (T-shape/corner) to avoid degenerate covariance
     ref_ts = np.array([10.0, 11.0, 12.0, 13.0])
-    ref_pos = np.array([[0.0, 0.0, 0.0],
-                        [1.0, 0.0, 0.0],
-                        [0.0, 1.0, 0.0],
-                        [0.0, 0.0, 1.0]])
+    ref_pos = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
     ref_ori = np.array([[0.0, 0.0, 0.0, 1.0]] * 4)  # xyzw: identity
 
     reference = Trajectory(
@@ -115,10 +172,7 @@ def test_evaluate_trajectory_perfect_alignment():
     # Pos 1: [1, 0, 0] -> [1, 3, 3]
     # Pos 2: [0, 1, 0] -> [0, 2, 3]
     # Pos 3: [0, 0, 1] -> [1, 2, 4]
-    est_pos = np.array([[1.0, 2.0, 3.0],
-                        [1.0, 3.0, 3.0],
-                        [0.0, 2.0, 3.0],
-                        [1.0, 2.0, 4.0]])
+    est_pos = np.array([[1.0, 2.0, 3.0], [1.0, 3.0, 3.0], [0.0, 2.0, 3.0], [1.0, 2.0, 4.0]])
     # R_z(90) quaternion (xyzw): [0, 0, 0.70710678, 0.70710678]
     est_ori = np.array([[0.0, 0.0, 0.70710678, 0.70710678]] * 4)
 
@@ -144,9 +198,7 @@ def test_evaluate_trajectory_perfect_alignment():
     t = np.array(res.alignment.t)
 
     # R_z(-90) rotates [1, 0, 0] to [0, -1, 0]
-    expected_R = np.array([[0.0, 1.0, 0.0],
-                           [-1.0, 0.0, 0.0],
-                           [0.0, 0.0, 1.0]])
+    expected_R = np.array([[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
     # Translate should be [-2, 1, -3]
     np.testing.assert_allclose(R, expected_R, atol=1e-5)
     np.testing.assert_allclose(t, [-2.0, 1.0, -3.0], atol=1e-5)
@@ -154,11 +206,7 @@ def test_evaluate_trajectory_perfect_alignment():
 
 def test_evaluate_trajectory_known_drift():
     ref_ts = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
-    ref_pos = np.array([[0.0, 0.0, 0.0],
-                        [1.0, 0.0, 0.0],
-                        [2.0, 0.0, 0.0],
-                        [3.0, 0.0, 0.0],
-                        [4.0, 0.0, 0.0]])
+    ref_pos = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0], [4.0, 0.0, 0.0]])
     ref_ori = np.array([[0.0, 0.0, 0.0, 1.0]] * 5)
 
     reference = Trajectory(
@@ -169,11 +217,7 @@ def test_evaluate_trajectory_known_drift():
     )
 
     # Estimate drifts in x direction by 0.1m per meter
-    est_pos = np.array([[0.0, 0.0, 0.0],
-                        [1.1, 0.0, 0.0],
-                        [2.2, 0.0, 0.0],
-                        [3.3, 0.0, 0.0],
-                        [4.4, 0.0, 0.0]])
+    est_pos = np.array([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [2.2, 0.0, 0.0], [3.3, 0.0, 0.0], [4.4, 0.0, 0.0]])
     est_ori = ref_ori.copy()
 
     estimate = Trajectory(
@@ -195,11 +239,7 @@ def test_evaluate_trajectory_known_drift():
 
 def test_evaluate_trajectory_coverage():
     ref_ts = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
-    ref_pos = np.array([[0.0, 0.0, 0.0],
-                        [1.0, 0.0, 0.0],
-                        [2.0, 0.0, 0.0],
-                        [3.0, 0.0, 0.0],
-                        [4.0, 0.0, 0.0]])
+    ref_pos = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0], [4.0, 0.0, 0.0]])
     ref_ori = np.array([[0.0, 0.0, 0.0, 1.0]] * 5)
 
     reference = Trajectory(
@@ -210,13 +250,16 @@ def test_evaluate_trajectory_coverage():
     )
 
     # Estimate has mixed health
-    est_health = np.array([
-        PoseHealth.OK,          # duration: 1.0
-        PoseHealth.DEGRADED,    # duration: 1.0
-        PoseHealth.LOST,        # duration: 1.0
-        PoseHealth.INVALID,     # duration: 1.0
-        PoseHealth.OK           # duration: 1.0 (inherits last dt)
-    ], dtype=object)
+    est_health = np.array(
+        [
+            PoseHealth.OK,  # duration: 1.0
+            PoseHealth.DEGRADED,  # duration: 1.0
+            PoseHealth.LOST,  # duration: 1.0
+            PoseHealth.INVALID,  # duration: 1.0
+            PoseHealth.OK,  # duration: 1.0 (inherits last dt)
+        ],
+        dtype=object,
+    )
 
     estimate = Trajectory(
         timestamps=ref_ts,
@@ -239,6 +282,63 @@ def test_evaluate_trajectory_coverage():
     assert cov.ok_fraction == 0.5
     assert cov.lost_fraction == 0.25
     assert cov.invalid_fraction == 0.25
+
+
+def test_evaluate_trajectory_runtime_and_failure_counts():
+    ref_ts = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
+    ref_pos = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+            [3.0, 1.0, 0.0],
+            [3.0, 1.0, 1.0],
+        ]
+    )
+    ref_ori = np.array([[0.0, 0.0, 0.0, 1.0]] * 6)
+
+    reference = Trajectory(
+        timestamps=ref_ts,
+        method="gt",
+        positions=ref_pos,
+        orientations=ref_ori,
+    )
+
+    health = np.array(
+        [
+            PoseHealth.OK,
+            PoseHealth.LOST,
+            PoseHealth.INVALID,
+            PoseHealth.OK,
+            PoseHealth.DEGRADED,
+            PoseHealth.LOST,
+        ],
+        dtype=object,
+    )
+    estimate = Trajectory(
+        timestamps=ref_ts,
+        method="imu_only",
+        positions=ref_pos.copy(),
+        orientations=ref_ori.copy(),
+        health=health,
+        latency_ms=np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]),
+    )
+
+    res = evaluate_trajectory(estimate, reference, EvalConfig(alignment_policy="none"))
+
+    assert res.runtime.update_count == 6
+    assert res.runtime.duration_sec == 5.0
+    assert res.runtime.odometry_frequency_hz == 1.0
+    assert res.runtime.latency_mean_ms == 3.5
+    assert res.runtime.latency_median_ms == 3.5
+    assert res.runtime.latency_max_ms == 6.0
+
+    assert res.failures.lost_pose_count == 2
+    assert res.failures.invalid_pose_count == 1
+    assert res.failures.failed_frame_count == 3
+    assert res.failures.failed_window_count == 2
+    assert res.failures.failed_duration_sec == 3.0
 
 
 def test_evaluate_trajectory_insufficient_pairs():

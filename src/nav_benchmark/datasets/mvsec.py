@@ -68,6 +68,10 @@ class MvsecSequence:
     gt_poses: np.ndarray | None = None
     images: np.ndarray | None = None
     image_timestamps: np.ndarray | None = None
+    event_frames: np.ndarray | None = None
+    event_frame_timestamps: np.ndarray | None = None
+    image_paths: list[str] = field(default_factory=list)
+    event_frame_paths: list[str] = field(default_factory=list)
 
 
 def _check_monotonic(ts: np.ndarray, stream_name: str, diagnostics: LoadDiagnostics) -> bool:

@@ -5,6 +5,24 @@ import numpy as np
 
 from nav_benchmark.trajectory.models import ExportMetadata, PoseHealth, Trajectory
 
+PROJECT_TRAJECTORY_COLUMNS = [
+    "timestamp",
+    "method",
+    "x",
+    "y",
+    "z",
+    "qx",
+    "qy",
+    "qz",
+    "qw",
+    "vx",
+    "vy",
+    "vz",
+    "confidence",
+    "health",
+    "latency_ms",
+]
+
 
 def _fmt_opt(val: float | None, dec: int) -> str:
     return f"{val:.{dec}f}" if val is not None and val != "" else ""
@@ -32,7 +50,7 @@ def _get_row(trajectory: Trajectory, i: int) -> list[str]:
     health = str(trajectory.health[i]) if trajectory.health is not None else PoseHealth.OK.value
     lat = _get_val(trajectory.latency_ms, i)
 
-    return [
+    row = [
         f"{ts:.9f}",
         method,
         f"{x:.9f}",
@@ -49,6 +67,13 @@ def _get_row(trajectory: Trajectory, i: int) -> list[str]:
         health,
         _fmt_opt(lat, 3),
     ]
+    for values in trajectory.extra_columns.values():
+        value = values[i]
+        if isinstance(value, str):
+            row.append(value)
+        else:
+            row.append(_fmt_opt(float(value), 9))
+    return row
 
 
 def export_project_csv(trajectory: Trajectory, path: str | Path, metadata: ExportMetadata | None = None) -> None:
@@ -62,25 +87,7 @@ def export_project_csv(trajectory: Trajectory, path: str | Path, metadata: Expor
 
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(
-            [
-                "timestamp",
-                "method",
-                "x",
-                "y",
-                "z",
-                "qx",
-                "qy",
-                "qz",
-                "qw",
-                "vx",
-                "vy",
-                "vz",
-                "confidence",
-                "health",
-                "latency_ms",
-            ]
-        )
+        writer.writerow([*PROJECT_TRAJECTORY_COLUMNS, *trajectory.extra_columns.keys()])
 
         for i in range(len(trajectory.timestamps)):
             row = _get_row(trajectory, i)
