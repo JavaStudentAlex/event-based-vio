@@ -4,7 +4,7 @@ estimated_files: 1
 skills_used: []
 ---
 
-# T02: Wire validate CLI subcommand into run.py
+# T02: Wired the validate CLI subcommand into run.py and implemented test coverage
 
 **Why:** The S05 contract requires `python -m nav_benchmark.run validate --run-dir <dir>` and `--latest` to invoke the validation module and print a pass/fail table with a nonzero exit code on failure.
 

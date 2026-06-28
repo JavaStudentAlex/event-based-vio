@@ -4,7 +4,7 @@ estimated_files: 1
 skills_used: []
 ---
 
-# T03: Unit tests for individual validation check functions
+# T03: Added comprehensive unit tests for all run-directory validation checks and cross-consistency validation.
 
 **Why:** Each validation check function in `validation.py` needs targeted unit tests with both valid and intentionally broken fixtures to prove correctness before integration testing.
 

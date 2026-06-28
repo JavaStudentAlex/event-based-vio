@@ -1,7 +1,7 @@
 # Codebase Map
 
-Generated: 2026-06-28T10:16:15Z | Files: 132 | Described: 0/132
-<!-- gsd:codebase-meta {"generatedAt":"2026-06-28T10:16:15Z","fingerprint":"e46ba1f7682f1ab9899346b96128aa8594ad13e1","fileCount":132,"truncated":false} -->
+Generated: 2026-06-28T12:28:04Z | Files: 135 | Described: 0/135
+<!-- gsd:codebase-meta {"generatedAt":"2026-06-28T12:28:04Z","fingerprint":"2f43f5defb15d235c97dcf1081d3f796781db748","fileCount":135,"truncated":false} -->
 
 ### (root)/
 - `.gitignore`
@@ -117,6 +117,7 @@ Generated: 2026-06-28T10:16:15Z | Files: 132 | Described: 0/132
 ### src/nav_benchmark/
 - `src/nav_benchmark/__init__.py`
 - `src/nav_benchmark/run.py`
+- `src/nav_benchmark/validation.py`
 
 ### src/nav_benchmark/baselines/
 - `src/nav_benchmark/baselines/base.py`
@@ -165,6 +166,7 @@ Generated: 2026-06-28T10:16:15Z | Files: 132 | Described: 0/132
 ### tests/
 - `tests/__init__.py`
 - `tests/conftest.py`
+- `tests/test_validation.py`
 
 ### tests/baselines/
 - `tests/baselines/test_imu_only_smoke.py`
@@ -174,6 +176,7 @@ Generated: 2026-06-28T10:16:15Z | Files: 132 | Described: 0/132
 - `tests/cli/test_eval_cli_synthetic.py`
 - `tests/cli/test_run_cli_synthetic.py`
 - `tests/cli/test_run_manifest_and_notes.py`
+- `tests/cli/test_validate_cli.py`
 
 ### tests/evaluation/
 - `tests/evaluation/test_eval_artifact_contract_synthetic.py`

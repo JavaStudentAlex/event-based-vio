@@ -26,12 +26,12 @@ S05 consumes S03 CLI/backend path (run directory layout, manifest, failure notes
   - Files: `src/nav_benchmark/validation.py`
   - Verify: PYTHONPATH=src uv run python -c "from nav_benchmark.validation import validate_run_directory, check_trajectory_csv, check_run_manifest, check_failure_notes, check_metrics_json, check_cross_consistency; print('All validation functions importable')"
 
-- [ ] **T02: Wire validate CLI subcommand into run.py** `est:small`
+- [x] **T02: Wired the validate CLI subcommand into run.py and implemented test coverage** `est:small`
   **Why:** The S05 contract requires `python -m nav_benchmark.run validate --run-dir <dir>` and `--latest` to invoke the validation module and print a pass/fail table with a nonzero exit code on failure.
   - Files: `src/nav_benchmark/run.py`
   - Verify: PYTHONPATH=src uv run python -m nav_benchmark.run validate --help
 
-- [ ] **T03: Unit tests for individual validation check functions** `est:medium`
+- [x] **T03: Added comprehensive unit tests for all run-directory validation checks and cross-consistency validation.** `est:medium`
   **Why:** Each validation check function in `validation.py` needs targeted unit tests with both valid and intentionally broken fixtures to prove correctness before integration testing.
   - Files: `tests/validation/test_artifact_validation.py`
   - Verify: PYTHONPATH=src uv run --only-dev pytest tests/validation/test_artifact_validation.py -v
