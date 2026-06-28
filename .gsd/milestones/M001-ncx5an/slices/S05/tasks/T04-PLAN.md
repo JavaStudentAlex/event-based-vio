@@ -4,7 +4,7 @@ estimated_files: 1
 skills_used: []
 ---
 
-# T04: CLI integration tests for validate subcommand with end-to-end smoke coverage
+# T04: Implemented end-to-end CLI integration tests for the validate subcommand.
 
 **Why:** The validate subcommand must work end-to-end: run synthetic → eval → validate, confirming the full pipeline produces valid artifacts. Also need to verify validate catches intentionally broken artifacts.
 

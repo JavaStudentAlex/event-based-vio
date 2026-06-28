@@ -36,7 +36,7 @@ S05 consumes S03 CLI/backend path (run directory layout, manifest, failure notes
   - Files: `tests/validation/test_artifact_validation.py`
   - Verify: PYTHONPATH=src uv run --only-dev pytest tests/validation/test_artifact_validation.py -v
 
-- [ ] **T04: CLI integration tests for validate subcommand with end-to-end smoke coverage** `est:medium`
+- [x] **T04: Implemented end-to-end CLI integration tests for the validate subcommand.** `est:medium`
   **Why:** The validate subcommand must work end-to-end: run synthetic → eval → validate, confirming the full pipeline produces valid artifacts. Also need to verify validate catches intentionally broken artifacts.
   - Files: `tests/cli/test_validate_cli.py`
   - Verify: PYTHONPATH=src uv run --only-dev pytest tests/cli/test_validate_cli.py -v

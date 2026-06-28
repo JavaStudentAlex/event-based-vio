@@ -1,7 +1,7 @@
 # Codebase Map
 
-Generated: 2026-06-28T12:28:04Z | Files: 135 | Described: 0/135
-<!-- gsd:codebase-meta {"generatedAt":"2026-06-28T12:28:04Z","fingerprint":"2f43f5defb15d235c97dcf1081d3f796781db748","fileCount":135,"truncated":false} -->
+Generated: 2026-06-28T12:30:12Z | Files: 136 | Described: 0/136
+<!-- gsd:codebase-meta {"generatedAt":"2026-06-28T12:30:12Z","fingerprint":"f21ac3096a6130c452c6ab380b2e8d98e2e5a791","fileCount":136,"truncated":false} -->
 
 ### (root)/
 - `.gitignore`
@@ -203,6 +203,9 @@ Generated: 2026-06-28T12:28:04Z | Files: 135 | Described: 0/135
 - `tests/trajectory/test_export.py`
 - `tests/trajectory/test_models.py`
 - `tests/trajectory/test_sync.py`
+
+### tests/validation/
+- `tests/validation/test_artifact_validation.py`
 
 ### tools/
 - `tools/build_events_from_rgb.py`
