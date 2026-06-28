@@ -28,6 +28,9 @@
 - [x] **S05: Manifest Failure Artifacts and CI Smoke Coverage** `risk:medium` `depends:[S03,S04]`
   > After this: The benchmark run always writes `run_manifest.json`, `failure_notes.md`, logs, and CI-friendly tests validate artifact contents rather than file presence alone.
 
+- [ ] **S06: Remediate validation string mismatch and run validation verification** `risk:low` `depends:[S05]`
+  > After this: The validation command successfully validates runs without throwing a string mismatch error, and the validate subcommand passes successfully.
+
 ## Boundary Map
 
 ### S01 -> S02

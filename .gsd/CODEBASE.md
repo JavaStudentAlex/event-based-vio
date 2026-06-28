@@ -1,7 +1,7 @@
 # Codebase Map
 
-Generated: 2026-06-28T12:30:12Z | Files: 136 | Described: 0/136
-<!-- gsd:codebase-meta {"generatedAt":"2026-06-28T12:30:12Z","fingerprint":"f21ac3096a6130c452c6ab380b2e8d98e2e5a791","fileCount":136,"truncated":false} -->
+Generated: 2026-06-28T17:31:33Z | Files: 138 | Described: 0/138
+<!-- gsd:codebase-meta {"generatedAt":"2026-06-28T17:31:33Z","fingerprint":"a68bc06c1831760293a34616815d1ffa96e02283","fileCount":138,"truncated":false} -->
 
 ### (root)/
 - `.gitignore`
@@ -123,7 +123,9 @@ Generated: 2026-06-28T12:30:12Z | Files: 136 | Described: 0/136
 - `src/nav_benchmark/baselines/base.py`
 - `src/nav_benchmark/baselines/common.py`
 - `src/nav_benchmark/baselines/event_imu.py`
+- `src/nav_benchmark/baselines/image_imu.py`
 - `src/nav_benchmark/baselines/imu.py`
+- `src/nav_benchmark/baselines/multimodal_vio.py`
 - `src/nav_benchmark/baselines/visual.py`
 
 ### src/nav_benchmark/datasets/
