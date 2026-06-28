@@ -1,16 +1,16 @@
 # Codebase Map
 
-Generated: 2026-06-28T00:32:05Z | Files: 67 | Described: 0/67
-<!-- gsd:codebase-meta {"generatedAt":"2026-06-28T00:32:05Z","fingerprint":"51e2704c24db52d79e017d382c1f0b9a2f704651","fileCount":67,"truncated":false} -->
+Generated: 2026-06-28T05:57:03Z | Files: 72 | Described: 0/72
+<!-- gsd:codebase-meta {"generatedAt":"2026-06-28T05:57:03Z","fingerprint":"5467cd3f60d6f7d76443fa895d33f184284555a6","fileCount":72,"truncated":false} -->
 
 ### (root)/
 - `.gitignore`
 - `.pre-commit-config.yaml`
 - `.python-version`
 - `AGENTS.md`
-- `plan.md`
 - `pyproject.toml`
 - `README.md`
+- `ruff_errors.txt`
 - `skills-lock.json`
 
 ### .github/
@@ -91,6 +91,11 @@ Generated: 2026-06-28T00:32:05Z | Files: 67 | Described: 0/67
 - `src/nav_benchmark/datasets/__init__.py`
 - `src/nav_benchmark/datasets/mvsec.py`
 
+### src/nav_benchmark/evaluation/
+- `src/nav_benchmark/evaluation/__init__.py`
+- `src/nav_benchmark/evaluation/metrics.py`
+- `src/nav_benchmark/evaluation/plots.py`
+
 ### src/nav_benchmark/trajectory/
 - `src/nav_benchmark/trajectory/__init__.py`
 - `src/nav_benchmark/trajectory/export.py`
@@ -106,6 +111,10 @@ Generated: 2026-06-28T00:32:05Z | Files: 67 | Described: 0/67
 ### tests/cli/
 - `tests/cli/test_run_cli_synthetic.py`
 - `tests/cli/test_run_manifest_and_notes.py`
+
+### tests/evaluation/
+- `tests/evaluation/test_metrics_synthetic.py`
+- `tests/evaluation/test_plots_synthetic.py`
 
 ### tests/nav_benchmark/
 - `tests/nav_benchmark/__init__.py`

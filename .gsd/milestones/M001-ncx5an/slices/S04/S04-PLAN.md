@@ -39,7 +39,7 @@ S04 closes the S02/S03 integration boundary by reading `estimated_trajectory.csv
   - Files: `src/nav_benchmark/evaluation/__init__.py`, `src/nav_benchmark/evaluation/metrics.py`, `tests/evaluation/test_metrics_synthetic.py`
   - Verify: rtk uv run --only-dev pytest tests/evaluation/test_metrics_synthetic.py -q
 
-- [ ] **T02: Trajectory and drift plotting utilities** `est:0.5 day`
+- [x] **T02: Implemented trajectory and drift plotting utilities with Agg backend and verified them via synthetic test cases.** `est:0.5 day`
   ---
   skills_used:
     - verify-before-complete

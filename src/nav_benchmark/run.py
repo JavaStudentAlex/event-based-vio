@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import sys
 import time
@@ -17,6 +18,19 @@ from nav_benchmark.datasets.mvsec import (
 )
 from nav_benchmark.trajectory.export import export_project_csv, export_tum
 from nav_benchmark.trajectory.models import ExportMetadata, Trajectory
+from nav_benchmark.evaluation.metrics import (
+    EvalConfig,
+    evaluate_trajectory,
+    export_metrics_json,
+    export_error_vs_time_csv,
+    export_error_vs_distance_csv,
+    read_project_csv,
+    make_json_serializable,
+)
+from nav_benchmark.evaluation.plots import (
+    write_trajectory_plot,
+    write_drift_over_distance_plot,
+)
 
 
 def get_code_version() -> str:
@@ -142,6 +156,7 @@ def write_run_manifest(args, config, metadata, run_dir) -> dict:
         "method": args.method,
         "dataset": args.dataset,
         "sequence": args.sequence,
+        "input": getattr(args, "input", None),
         "config": {
             "gravity": config.gravity.tolist() if hasattr(config, "gravity") else [0.0, 0.0, 9.81],
             "initial_position": config.initial_position.tolist()
@@ -183,10 +198,142 @@ def write_run_manifest(args, config, metadata, run_dir) -> dict:
     return run_manifest
 
 
+def discover_latest_run_dir(output_root: Path, method: str | None = None, sequence: str | None = None) -> Path | None:
+    if not output_root.exists():
+        return None
+    candidates = []
+    for path in output_root.iterdir():
+        if not path.is_dir():
+            continue
+
+        # Check method filter
+        if method:
+            manifest_path = path / "run_manifest.json"
+            if not manifest_path.exists():
+                continue
+            try:
+                with open(manifest_path) as f:
+                    manifest = json.load(f)
+                if manifest.get("method") != method:
+                    continue
+            except Exception:
+                continue
+
+        # Check sequence filter
+        if sequence:
+            manifest_path = path / "run_manifest.json"
+            if not manifest_path.exists():
+                continue
+            try:
+                with open(manifest_path) as f:
+                    manifest = json.load(f)
+                if manifest.get("sequence") != sequence:
+                    continue
+            except Exception:
+                continue
+
+        # Ensure it contains estimated_trajectory.csv
+        if not (path / "estimated_trajectory.csv").exists():
+            continue
+
+        candidates.append(path)
+
+    if not candidates:
+        return None
+
+    # Sort by modification time of estimated_trajectory.csv
+    candidates.sort(key=lambda p: (p / "estimated_trajectory.csv").stat().st_mtime, reverse=True)
+    return candidates[0]
+
+
+def load_ground_truth(path: Path) -> Trajectory:
+    if not path.exists():
+        raise FileNotFoundError(f"Ground truth path does not exist: {path}")
+
+    if path.suffix.lower() in [".h5", ".hdf5"]:
+        sequence = load_mvsec_sequence(path)
+        if sequence.gt_poses is None or len(sequence.gt_poses) == 0:
+            raise ValueError(f"No ground-truth poses found in MVSEC file: {path}")
+
+        gt_poses = sequence.gt_poses
+        N = len(gt_poses)
+        from nav_benchmark.trajectory.models import PoseHealth
+
+        positions = np.stack([gt_poses["x"], gt_poses["y"], gt_poses["z"]], axis=1)
+        orientations = np.stack([gt_poses["qx"], gt_poses["qy"], gt_poses["qz"], gt_poses["qw"]], axis=1)
+
+        return Trajectory(
+            timestamps=gt_poses["t"],
+            method="ground_truth",
+            positions=positions,
+            orientations=orientations,
+            velocities=np.zeros((N, 3)),
+            confidence=np.ones(N),
+            health=np.array([PoseHealth.OK.value] * N, dtype=object),
+            latency_ms=np.zeros(N),
+        )
+    else:
+        try:
+            return read_project_csv(path)
+        except Exception as e:
+            raise ValueError(f"Failed to read ground truth from CSV: {e}") from e
+
+
+def write_failed_evaluation_artifacts(run_dir: Path, reason: str, config: EvalConfig) -> None:
+    failed_result = {
+        "status": "failed",
+        "error_message": reason,
+        "config": {
+            "association_tolerance_sec": config.association_tolerance_sec,
+            "alignment_policy": config.alignment_policy,
+            "correct_scale": config.correct_scale,
+            "time_offset_search": config.time_offset_search,
+            "outlier_rejection": config.outlier_rejection,
+            "rpe_delta_m": config.rpe_delta_m,
+            "drift_bin_width_m": config.drift_bin_width_m,
+        },
+        "diagnostics": None,
+        "coverage": None,
+        "alignment": None,
+        "metrics": None,
+        "drift_bins": [],
+        "error_vs_time": [],
+        "error_vs_distance": [],
+        "aligned_estimate": None,
+        "aligned_ground_truth": None,
+    }
+    with open(run_dir / "metrics.json", "w", encoding="utf-8") as f:
+        json.dump(failed_result, f, indent=2)
+
+    with open(run_dir / "ground_truth_aligned.csv", "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "timestamp", "method", "x", "y", "z", "qx", "qy", "qz", "qw",
+            "vx", "vy", "vz", "confidence", "health", "latency_ms"
+        ])
+
+    with open(run_dir / "error_vs_time.csv", "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "timestamp", "est_x", "est_y", "est_z",
+            "gt_aligned_x", "gt_aligned_y", "gt_aligned_z",
+            "error_x", "error_y", "error_z", "error_magnitude",
+            "health", "association_residual"
+        ])
+
+    with open(run_dir / "error_vs_distance.csv", "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "cumulative_distance", "error_magnitude", "health",
+            "association_residual", "bin_start", "bin_end"
+        ])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Visual-Inertial Navigation Benchmark Runner")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    # Subcommand 'run'
     run_parser = subparsers.add_parser("run", help="Run baseline or ensemble estimation on dataset")
     run_parser.add_argument(
         "--method",
@@ -218,6 +365,59 @@ def main() -> None:
         "--resume",
         action="store_true",
         help="If the target run directory exists, append a suffix like -r{N} to avoid error",
+    )
+
+    # Subcommand 'eval'
+    eval_parser = subparsers.add_parser("eval", help="Evaluate a completed run trajectory against ground truth")
+    eval_parser.add_argument(
+        "--run-dir",
+        help="Path to the run directory to evaluate (required unless --latest is set)",
+    )
+    eval_parser.add_argument(
+        "--latest",
+        action="store_true",
+        help="Automatically find and evaluate the latest run directory in --output-root",
+    )
+    eval_parser.add_argument(
+        "--ground-truth",
+        help="Path to the ground truth trajectory file (CSV or MVSEC HDF5 file)",
+    )
+    eval_parser.add_argument(
+        "--output-root",
+        default="runs",
+        help="Root directory where run folders are stored (used with --latest)",
+    )
+    eval_parser.add_argument(
+        "--method",
+        help="Filter for --latest to match a specific method",
+    )
+    eval_parser.add_argument(
+        "--sequence",
+        help="Filter for --latest to match a specific sequence",
+    )
+    eval_parser.add_argument(
+        "--association-tolerance-sec",
+        type=float,
+        default=0.1,
+        help="Maximum allowed time difference for trajectory timestamp association",
+    )
+    eval_parser.add_argument(
+        "--rpe-delta-m",
+        type=float,
+        default=1.0,
+        help="Distance step delta for RPE calculations",
+    )
+    eval_parser.add_argument(
+        "--drift-bin-width-m",
+        type=float,
+        default=20.0,
+        help="Width of drift bins in meters",
+    )
+    eval_parser.add_argument(
+        "--alignment-policy",
+        choices=["se3", "none"],
+        default="se3",
+        help="Alignment policy",
     )
 
     args = parser.parse_args()
@@ -300,6 +500,175 @@ def main() -> None:
         except Exception as e:
             log_message(f"[FAILED] Run failed with error: {e}")
             raise
+
+    elif args.command == "eval":
+        # Determine run directory
+        run_dir_path = None
+        if args.latest:
+            run_dir_path = discover_latest_run_dir(
+                Path(args.output_root),
+                method=args.method,
+                sequence=args.sequence
+            )
+            if not run_dir_path:
+                print("Error: No run directory found for evaluation.", file=sys.stderr)
+                sys.exit(1)
+        else:
+            if not args.run_dir:
+                parser.error("Either --run-dir or --latest must be specified.")
+            run_dir_path = Path(args.run_dir)
+
+        if not run_dir_path.exists():
+            print(f"Error: Run directory does not exist: {run_dir_path}", file=sys.stderr)
+            sys.exit(1)
+
+        # Setup EvalConfig
+        eval_cfg = EvalConfig(
+            association_tolerance_sec=args.association_tolerance_sec,
+            alignment_policy=args.alignment_policy,
+            rpe_delta_m=args.rpe_delta_m,
+            drift_bin_width_m=args.drift_bin_width_m,
+        )
+
+        # Helper to fail evaluation with writing failed artifacts
+        def fail_eval(reason_str: str) -> None:
+            print(f"Evaluation failed: {reason_str}", file=sys.stderr)
+            try:
+                write_failed_evaluation_artifacts(run_dir_path, reason_str, eval_cfg)
+                # Update manifest with failure
+                manifest_path = run_dir_path / "run_manifest.json"
+                if manifest_path.exists():
+                    try:
+                        with open(manifest_path, "r", encoding="utf-8") as f:
+                            manifest = json.load(f)
+                        manifest["evaluation"] = {
+                            "status": "failed",
+                            "error_message": reason_str,
+                            "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        }
+                        with open(manifest_path, "w", encoding="utf-8") as f:
+                            json.dump(manifest, f, indent=4)
+                    except Exception:
+                        pass
+            except Exception as write_err:
+                print(f"Failed to write failure diagnostics: {write_err}", file=sys.stderr)
+            sys.exit(1)
+
+        # 1. Read estimated trajectory first to verify the run directory contains it
+        est_traj_path = run_dir_path / "estimated_trajectory.csv"
+        if not est_traj_path.exists():
+            fail_eval(f"Estimated trajectory not found: {est_traj_path}")
+
+        # 2. Resolve ground truth
+        gt_path_str = None
+        if args.ground_truth:
+            gt_path_str = args.ground_truth
+        else:
+            # Try to resolve from run_manifest.json
+            manifest_path = run_dir_path / "run_manifest.json"
+            if manifest_path.exists():
+                try:
+                    with open(manifest_path, "r", encoding="utf-8") as f:
+                        manifest = json.load(f)
+                    gt_path_str = manifest.get("input")
+                except Exception as manifest_err:
+                    fail_eval(f"Failed to read input path from run_manifest.json: {manifest_err}")
+
+            if not gt_path_str:
+                fail_eval("Ground truth path not specified and could not be resolved from run_manifest.json")
+
+        gt_path = Path(gt_path_str)
+        if not gt_path.exists():
+            fail_eval(f"Ground truth file not found: {gt_path}")
+
+        try:
+            estimate = read_project_csv(est_traj_path)
+        except Exception as e:
+            fail_eval(f"Failed to read estimated trajectory: {e}")
+
+        # 3. Load ground truth
+        try:
+            ground_truth = load_ground_truth(gt_path)
+        except Exception as e:
+            fail_eval(f"Failed to load ground truth trajectory: {e}")
+
+        # 4. Evaluate trajectory
+        try:
+            result = evaluate_trajectory(estimate, ground_truth, eval_cfg)
+        except Exception as e:
+            fail_eval(f"Trajectory evaluation failed: {e}")
+
+        # 5. Write artifacts
+        try:
+            # metrics.json
+            export_metrics_json(result, run_dir_path / "metrics.json")
+
+            # error_vs_time.csv
+            export_error_vs_time_csv(result, run_dir_path / "error_vs_time.csv")
+
+            # error_vs_distance.csv
+            export_error_vs_distance_csv(result, run_dir_path / "error_vs_distance.csv")
+
+            # ground_truth_aligned.csv
+            if result.aligned_ground_truth:
+                export_project_csv(
+                    result.aligned_ground_truth,
+                    run_dir_path / "ground_truth_aligned.csv",
+                    ExportMetadata(
+                        source_frame="gt",
+                        target_frame="world",
+                    )
+                )
+            else:
+                # write empty ground_truth_aligned.csv
+                with open(run_dir_path / "ground_truth_aligned.csv", "w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([
+                        "timestamp", "method", "x", "y", "z", "qx", "qy", "qz", "qw",
+                        "vx", "vy", "vz", "confidence", "health", "latency_ms"
+                    ])
+
+            # Plots: trajectory and drift
+            seq_name = getattr(args, "sequence", None) or ground_truth.method
+            write_trajectory_plot(
+                result,
+                run_dir_path / "trajectory_plot",
+                sequence=seq_name,
+                title=f"Trajectory: {estimate.method} vs Ground Truth",
+            )
+            try:
+                write_drift_over_distance_plot(
+                    result,
+                    run_dir_path / "drift_plot",
+                    sequence=seq_name,
+                    title=f"Drift over Distance: {estimate.method}",
+                )
+            except Exception as plot_err:
+                print(f"Warning: Drift plotting skipped or failed: {plot_err}", file=sys.stderr)
+
+            # Update run_manifest.json with success block
+            manifest_path = run_dir_path / "run_manifest.json"
+            if manifest_path.exists():
+                try:
+                    with open(manifest_path, "r", encoding="utf-8") as f:
+                        manifest = json.load(f)
+
+                    # Convert metrics and other fields to serializable form
+                    ser_metrics = make_json_serializable(result.metrics)
+                    manifest["evaluation"] = {
+                        "status": "success",
+                        "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "metrics": ser_metrics,
+                    }
+                    with open(manifest_path, "w", encoding="utf-8") as f:
+                        json.dump(manifest, f, indent=4)
+                except Exception as manifest_err:
+                    print(f"Warning: Failed to update run_manifest.json: {manifest_err}", file=sys.stderr)
+
+            print(f"Evaluation completed successfully. Artifacts written to {run_dir_path}")
+
+        except Exception as e:
+            fail_eval(f"Failed to write evaluation artifacts: {e}")
 
 
 if __name__ == "__main__":

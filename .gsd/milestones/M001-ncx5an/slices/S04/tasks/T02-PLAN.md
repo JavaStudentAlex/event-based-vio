@@ -4,7 +4,7 @@ estimated_files: 2
 skills_used: []
 ---
 
-# T02: Trajectory and drift plotting utilities
+# T02: Implemented trajectory and drift plotting utilities with Agg backend and verified them via synthetic test cases.
 
 ---
 skills_used:

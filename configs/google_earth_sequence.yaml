@@ -1,0 +1,62 @@
+sequence:
+  name: ge_sequence_001
+  duration_s: 60
+  output_dir: data/ge_sequence_001
+  random_seed: 42
+
+recording:
+  capture_fps: 30
+  save_rgb_frames: true
+  save_rgb_preview: true
+  preview_fps: 30
+  max_missing_frame_gap_s: 1.0
+
+flight:
+  start_lat: 50.4501
+  start_lon: 30.5234
+  start_alt_m: 100.0
+  speed_mps: 10.0
+  position_update_hz: 10
+  deterministic_heading: true
+  start_heading_deg: 90.0
+  heading_script:
+    - {t_s: 0.0, heading_deg: 90.0}
+    - {t_s: 15.0, heading_deg: 105.0}
+    - {t_s: 30.0, heading_deg: 75.0}
+    - {t_s: 45.0, heading_deg: 90.0}
+
+camera:
+  model: pinhole
+  width: 640
+  height: 480
+  fx: 450.0
+  fy: 450.0
+  cx: 320.0
+  cy: 240.0
+  distortion_model: none
+  distortion_coeffs: [0.0, 0.0, 0.0, 0.0]
+  note: "Assumed synthetic calibration, not measured Google Earth camera intrinsics."
+
+event_camera:
+  positive_threshold: 0.20
+  negative_threshold: 0.20
+  refractory_period_us: 100
+  output_csv: true
+  output_h5: true
+  visualization_window_ms: 50
+  max_events_per_frame_pair: 200000
+
+imu:
+  rate_hz: 200
+  gravity_mps2: 9.81
+  accel_noise_std: 0.03
+  gyro_noise_std: 0.002
+  accel_bias_walk_std: 0.0001
+  gyro_bias_walk_std: 0.00001
+  deterministic_noise: true
+
+validation:
+  require_nonzero_events: true
+  require_rgb_preview: true
+  require_event_preview: true
+  max_duration_mismatch_s: 0.1
