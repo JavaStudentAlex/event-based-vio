@@ -48,7 +48,7 @@ S04 closes the S02/S03 integration boundary by reading `estimated_trajectory.csv
   - Files: `src/nav_benchmark/evaluation/plots.py`, `tests/evaluation/test_plots_synthetic.py`
   - Verify: rtk uv run --only-dev pytest tests/evaluation/test_plots_synthetic.py -q
 
-- [ ] **T03: Eval CLI and run directory artifact writer** `est:1 day`
+- [x] **T03: Added and verified eval CLI artifact writing with deterministic diagnostics and expanded synthetic failure coverage.** `est:1 day`
   ---
   skills_used:
     - design-an-interface

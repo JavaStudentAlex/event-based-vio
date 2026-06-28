@@ -4,7 +4,7 @@ estimated_files: 3
 skills_used: []
 ---
 
-# T03: Eval CLI and run directory artifact writer
+# T03: Added and verified eval CLI artifact writing with deterministic diagnostics and expanded synthetic failure coverage.
 
 ---
 skills_used:

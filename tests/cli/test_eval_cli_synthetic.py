@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 
-def create_synthetic_trajectory_csv(path: Path, timestamps, x_offsets=0.0):
+def create_synthetic_trajectory_csv(path: Path, timestamps, x_offsets=0.0, health="OK"):
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow([
@@ -23,7 +23,7 @@ def create_synthetic_trajectory_csv(path: Path, timestamps, x_offsets=0.0):
             z = t * 0.1
             writer.writerow([
                 t, "imu_only", x, y, z, 0.0, 0.0, 0.0, 1.0,
-                0.0, 0.0, 0.0, 1.0, "OK", 5.0
+                0.0, 0.0, 0.0, 1.0, health, 5.0
             ])
 
 
@@ -231,3 +231,26 @@ def test_eval_cli_failure_cases(tmp_path):
     with open(run_dir / "metrics.json") as f:
         metrics_data = json.load(f)
     assert metrics_data["status"] == "failed"
+
+    # Case 4: All estimates invalid, so no poses are eligible for alignment/evaluation
+    create_synthetic_trajectory_csv(est_path, timestamps, health="INVALID")
+    gt_path = tmp_path / "gt_valid_for_invalid_case.csv"
+    create_synthetic_trajectory_csv(gt_path, timestamps)
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "nav_benchmark.run",
+        "eval",
+        "--run-dir",
+        str(run_dir),
+        "--ground-truth",
+        str(gt_path),
+    ]
+    res = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    assert res.returncode != 0
+    assert "Insufficient OK/DEGRADED poses" in res.stderr
+    with open(run_dir / "metrics.json") as f:
+        metrics_data = json.load(f)
+    assert metrics_data["status"] == "failed"
+    assert "Insufficient OK/DEGRADED poses" in metrics_data["reason"]

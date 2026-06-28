@@ -1,11 +1,14 @@
 # GSD State
 
-**Active Milestone:** None
-**Active Slice:** None
-**Phase:** pre-planning
+**Active Milestone:** M001-ncx5an: MVSEC Pipeline and IMU Sanity Benchmark
+**Active Slice:** S04: Drift Evaluation and Plots
+**Phase:** executing
 **Requirements Status:** 0 active · 0 validated · 0 deferred · 0 out of scope
 
 ## Milestone Registry
+- 🔄 **M001-ncx5an:** MVSEC Pipeline and IMU Sanity Benchmark
+- ⬜ **M002:** First Event+IMU Odometry Backend
+- ⬜ **M003:** Strong Baselines and Benchmark Reporting
 
 ## Recent Decisions
 - D003 (architecture): Health labeling for imu_only: default OK; DEGRADED when either (a) IMU sample gap dt > 0.03 s and <= 0.10 s, or (b) \ -> \
@@ -15,7 +18,7 @@
 - D007 (M001-ncx5an/S04): S04 error series artifact schema -> Write error_vs_time.csv with timestamp, estimated_xyz, aligned_ground_truth_xyz, xyz error, error magnitude, health, and association residual columns; write error_vs_distance.csv with cumulative distance, error magnitude, health, association residual, and 20 m bin fields used by the drift plot.
 
 ## Blockers
-- DB unavailable — runtime markdown state derivation is disabled
+- None
 
 ## Next Action
-Open or create the canonical GSD database before deriving workflow state. If this project only has markdown state, run /gsd migrate explicitly.
+Execute T04: Evaluation documentation and full slice verification in slice S04.
