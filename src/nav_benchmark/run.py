@@ -282,6 +282,7 @@ def load_ground_truth(path: Path) -> Trajectory:
 def write_failed_evaluation_artifacts(run_dir: Path, reason: str, config: EvalConfig) -> None:
     failed_result = {
         "status": "failed",
+        "reason": reason,
         "error_message": reason,
         "config": {
             "association_tolerance_sec": config.association_tolerance_sec,
