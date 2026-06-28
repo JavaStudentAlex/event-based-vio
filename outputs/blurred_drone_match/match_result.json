@@ -1,0 +1,15 @@
+{
+  "status": "low_confidence",
+  "method": "orb",
+  "edge_mode": "none",
+  "drone_image": "data/example_drone.jpg",
+  "reference_image": "data/example_reference.jpg",
+  "num_keypoints_drone": 2452,
+  "num_keypoints_reference": 5000,
+  "num_raw_matches": 2452,
+  "num_inlier_matches": 14,
+  "inlier_ratio": 0.005709624796084829,
+  "estimated_center_lat": 45.64978790283203,
+  "estimated_center_lon": 34.20649337768555,
+  "confidence": 0.0
+}
