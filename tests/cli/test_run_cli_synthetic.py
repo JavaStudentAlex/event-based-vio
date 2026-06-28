@@ -88,17 +88,21 @@ def test_cli_main_direct(tmp_path):
 
     # Try running a second time with the exact same timestamp (mocked time.strftime)
     # Without --resume, it should exit with code 1
-    with mock.patch("sys.argv", test_args):
-        with mock.patch("time.strftime", return_value=first_run_dir.name.split("_imu_only")[0]):
-            with pytest.raises(SystemExit) as excinfo:
-                main()
-            assert excinfo.value.code == 1
+    with (
+        mock.patch("sys.argv", test_args),
+        mock.patch("time.strftime", return_value=first_run_dir.name.split("_imu_only")[0]),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        main()
+    assert excinfo.value.code == 1
 
     # Now run with --resume (should append -r1)
-    resume_args = test_args + ["--resume"]
-    with mock.patch("sys.argv", resume_args):
-        with mock.patch("time.strftime", return_value=first_run_dir.name.split("_imu_only")[0]):
-            main()
+    resume_args = [*test_args, "--resume"]
+    with (
+        mock.patch("sys.argv", resume_args),
+        mock.patch("time.strftime", return_value=first_run_dir.name.split("_imu_only")[0]),
+    ):
+        main()
 
     # Verify that -r1 directory exists and contains files
     resume_run_folders = list(output_root.glob("*_imu_only_test_seq_direct-r1"))
@@ -127,6 +131,5 @@ def test_cli_missing_input_for_mvsec(tmp_path):
         str(output_root),
     ]
 
-    with mock.patch("sys.argv", test_args):
-        with pytest.raises(SystemExit):
-            main()
+    with mock.patch("sys.argv", test_args), pytest.raises(SystemExit):
+        main()
