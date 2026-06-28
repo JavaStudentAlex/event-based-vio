@@ -255,7 +255,7 @@ def main():
 
 if __name__ == "__main__":
     main()
-"""
+""",
 }
 
 for path, content in files.items():

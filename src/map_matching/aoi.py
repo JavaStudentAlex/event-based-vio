@@ -1,11 +1,12 @@
-import math
 from dataclasses import dataclass
+
 
 def dms_to_decimal(degrees: float, minutes: float, seconds: float, hemisphere: str) -> float:
     decimal = degrees + minutes / 60.0 + seconds / 3600.0
-    if hemisphere.upper() in ['S', 'W']:
+    if hemisphere.upper() in ["S", "W"]:
         decimal = -decimal
     return decimal
+
 
 @dataclass
 class AOI:

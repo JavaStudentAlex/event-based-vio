@@ -1,10 +1,12 @@
-import numpy as np
 import cv2
+import numpy as np
+
 
 def project_center(H, width, height):
     center = np.array([[[width / 2.0, height / 2.0]]], dtype=np.float32)
     projected = cv2.perspectiveTransform(center, H)
     return projected[0][0]
+
 
 def pixel_to_latlon(px_x, px_y, metadata):
     # Simplistic approximation using metadata bounds

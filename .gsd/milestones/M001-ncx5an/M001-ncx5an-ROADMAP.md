@@ -22,7 +22,7 @@
 - [x] **S03: IMU Only Backend and CLI Run Path** `risk:medium` `depends:[S02]`
   > After this: One command runs `imu_only` on synthetic data through the backend interface and writes the required run directory skeleton with valid trajectory artifacts.
 
-- [ ] **S04: Drift Evaluation and Plots** `risk:high` `depends:[S02,S03]`
+- [x] **S04: Drift Evaluation and Plots** `risk:high` `depends:[S02,S03]`
   > After this: The evaluator aligns estimates to ground truth with explicit SE3 policy and produces valid `metrics.json`, `error_vs_time.csv`, `error_vs_distance.csv`, trajectory plot, and drift-over-distance plot.
 
 - [ ] **S05: Manifest Failure Artifacts and CI Smoke Coverage** `risk:medium` `depends:[S03,S04]`

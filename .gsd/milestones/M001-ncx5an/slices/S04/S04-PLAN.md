@@ -58,7 +58,7 @@ S04 closes the S02/S03 integration boundary by reading `estimated_trajectory.csv
   - Files: `src/nav_benchmark/run.py`, `tests/cli/test_eval_cli_synthetic.py`, `tests/evaluation/test_eval_artifact_contract_synthetic.py`
   - Verify: rtk uv run --only-dev pytest tests/cli/test_eval_cli_synthetic.py tests/evaluation/test_eval_artifact_contract_synthetic.py -q
 
-- [ ] **T04: Evaluation documentation and full slice verification** `est:0.5 day`
+- [x] **T04: Documented the S04 eval CLI and drift-evaluation artifact contract, then verified the full repository with Ruff, format check, and pytest.** `est:0.5 day`
   ---
   skills_used:
     - write-docs
