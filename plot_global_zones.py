@@ -1,8 +1,8 @@
 import math
 import urllib.request
-import numpy as np
+
 import cv2
-import os
+import numpy as np
 
 WAYPOINTS = [
     (45.63634167, 34.23058611),
@@ -16,12 +16,14 @@ WAYPOINTS = [
     (45.51800278, 34.62104167),
 ]
 
+
 def deg2num(lat_deg, lon_deg, zoom):
     lat_rad = math.radians(lat_deg)
-    n = 2.0 ** zoom
+    n = 2.0**zoom
     xtile_f = (lon_deg + 180.0) / 360.0 * n
     ytile_f = (1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n
     return (xtile_f, ytile_f)
+
 
 def get_tile(x, y, z):
     url = f"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
@@ -30,10 +32,12 @@ def get_tile(x, y, z):
         with urllib.request.urlopen(req) as response:
             arr = np.asarray(bytearray(response.read()), dtype=np.uint8)
             img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-            if img is None: return np.zeros((256, 256, 3), dtype=np.uint8)
+            if img is None:
+                return np.zeros((256, 256, 3), dtype=np.uint8)
             return img
-    except Exception as e:
+    except Exception:
         return np.zeros((256, 256, 3), dtype=np.uint8)
+
 
 zoom_global = 12
 zoom_drone = 17
@@ -45,7 +49,7 @@ scale_factor = 2 ** (zoom_drone - zoom_global)
 footprint_size_global = drone_crop_size / scale_factor  # 400 / 32 = 12.5 pixels
 
 # Bounding box of tiles
-min_tx, min_ty = float('inf'), float('inf')
+min_tx, min_ty = float("inf"), float("inf")
 max_tx, max_ty = 0, 0
 
 points_t = []
@@ -86,22 +90,26 @@ pts = pts.reshape((-1, 1, 2))
 cv2.polylines(global_map, [pts], isClosed=False, color=(0, 255, 255), thickness=3, lineType=cv2.LINE_AA)
 
 # Draw rectangular figures (zones) for the footprints
-half_size = int(math.ceil(footprint_size_global / 2))
+half_size = math.ceil(footprint_size_global / 2)
 # Make it slightly larger so it's easily visible to the user, perhaps double size for visibility
-vis_half_size = max(half_size, 10) 
+vis_half_size = max(half_size, 10)
 
 for i, pt in enumerate(pts):
     px, py = pt[0]
-    
+
     # Draw rectangle zone (drone footprint)
     top_left = (px - vis_half_size, py - vis_half_size)
     bottom_right = (px + vis_half_size, py + vis_half_size)
-    cv2.rectangle(global_map, top_left, bottom_right, (0, 0, 255), 3) # Red outline
-    
+    cv2.rectangle(global_map, top_left, bottom_right, (0, 0, 255), 3)  # Red outline
+
     # Label the zone
     text_pos = (px + vis_half_size + 5, py + vis_half_size + 5)
-    cv2.putText(global_map, f"Zone {i+1}", text_pos, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3, cv2.LINE_AA) # shadow
-    cv2.putText(global_map, f"Zone {i+1}", text_pos, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA) # text
+    cv2.putText(
+        global_map, f"Zone {i + 1}", text_pos, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3, cv2.LINE_AA
+    )  # shadow
+    cv2.putText(
+        global_map, f"Zone {i + 1}", text_pos, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA
+    )  # text
 
 out_path = "/home/jovyan/event-based-vio/global_map_zones.jpg"
 cv2.imwrite(out_path, global_map)

@@ -1,8 +1,8 @@
 import math
 import urllib.request
-import numpy as np
+
 import cv2
-import os
+import numpy as np
 
 WAYPOINTS = [
     (45.63634167, 34.23058611),
@@ -16,12 +16,14 @@ WAYPOINTS = [
     (45.51800278, 34.62104167),
 ]
 
+
 def deg2num(lat_deg, lon_deg, zoom):
     lat_rad = math.radians(lat_deg)
-    n = 2.0 ** zoom
+    n = 2.0**zoom
     xtile_f = (lon_deg + 180.0) / 360.0 * n
     ytile_f = (1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n
     return (xtile_f, ytile_f)
+
 
 def get_tile(x, y, z):
     url = f"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
@@ -30,16 +32,18 @@ def get_tile(x, y, z):
         with urllib.request.urlopen(req) as response:
             arr = np.asarray(bytearray(response.read()), dtype=np.uint8)
             img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-            if img is None: return np.zeros((256, 256, 3), dtype=np.uint8)
+            if img is None:
+                return np.zeros((256, 256, 3), dtype=np.uint8)
             return img
     except Exception as e:
         print(f"Failed to fetch tile {z}/{y}/{x}: {e}")
         return np.zeros((256, 256, 3), dtype=np.uint8)
 
+
 zoom = 12
 
 # Find bounding box of tiles
-min_tx, min_ty = float('inf'), float('inf')
+min_tx, min_ty = float("inf"), float("inf")
 max_tx, max_ty = 0, 0
 
 points_t = []
@@ -87,9 +91,9 @@ for i, pt in enumerate(pts):
     # draw circle
     cv2.circle(global_map, (px, py), 12, (0, 0, 255), -1, cv2.LINE_AA)
     # text background
-    cv2.rectangle(global_map, (px+15, py-20), (px+40, py+5), (0,0,0), -1)
+    cv2.rectangle(global_map, (px + 15, py - 20), (px + 40, py + 5), (0, 0, 0), -1)
     # text
-    cv2.putText(global_map, str(i+1), (px+17, py), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(global_map, str(i + 1), (px + 17, py), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
 
 out_path = "/home/jovyan/event-based-vio/global_route_map.jpg"
 cv2.imwrite(out_path, global_map)
