@@ -159,6 +159,25 @@ def _iter_frame_grays(rgb_dir: Path, rel_paths: list[str]) -> Iterator[np.ndarra
         yield load_png_gray(rgb_dir / Path(rel).name)
 
 
+def _read_rgb_timestamps(ts_csv: Path) -> tuple[list[str], list[float]]:
+    rel_paths: list[str] = []
+    timestamps: list[float] = []
+    with open(ts_csv, newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rel_paths.append(row["path"])
+            timestamps.append(float(row["timestamp_s"]))
+    return rel_paths, timestamps
+
+
+def _write_event_outputs(output_dir: Path, cfg: EventCameraCfg, events: EventArrays, pair_stats) -> None:
+    if cfg.output_csv:
+        write_events_csv(events, output_dir / "events" / "events.csv")
+    if cfg.output_h5:
+        write_events_h5(events, output_dir / "events" / "events.h5")
+    write_event_timestamps_csv(pair_stats, output_dir / "metadata" / "event_timestamps.csv")
+
+
 def convert_sequence(
     output_dir: str | Path,
     cfg: EventCameraCfg,
@@ -172,20 +191,8 @@ def convert_sequence(
     if not ts_csv.exists():
         raise FileNotFoundError(f"rgb_timestamps.csv not found: {ts_csv}")
 
-    rel_paths: list[str] = []
-    timestamps: list[float] = []
-    with open(ts_csv, newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            rel_paths.append(row["path"])
-            timestamps.append(float(row["timestamp_s"]))
-
+    rel_paths, timestamps = _read_rgb_timestamps(ts_csv)
     frames = [load_png_gray(rgb_dir / Path(rel).name) for rel in rel_paths]
     events, pair_stats = frames_to_events(frames, np.asarray(timestamps), cfg, width, height)
-
-    if cfg.output_csv:
-        write_events_csv(events, output_dir / "events" / "events.csv")
-    if cfg.output_h5:
-        write_events_h5(events, output_dir / "events" / "events.h5")
-    write_event_timestamps_csv(pair_stats, output_dir / "metadata" / "event_timestamps.csv")
+    _write_event_outputs(output_dir, cfg, events, pair_stats)
     return events

@@ -27,20 +27,27 @@ class SequenceCounts:
 
 def get_tool_version() -> str:
     """Best-effort tool version: git short SHA if available, else the package version."""
+    return _git_version() or _package_version()
+
+
+def _git_version() -> str | None:
     git_exe = shutil.which("git")
-    if git_exe:
-        try:
-            sha = subprocess.run(
-                [git_exe, "rev-parse", "--short", "HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-            if sha.returncode == 0 and sha.stdout.strip():
-                return f"git:{sha.stdout.strip()}"
-        except Exception:
-            pass
+    if not git_exe:
+        return None
+    try:
+        sha = subprocess.run(
+            [git_exe, "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception:
+        return None
+    return f"git:{sha.stdout.strip()}" if sha.returncode == 0 and sha.stdout.strip() else None
+
+
+def _package_version() -> str:
     try:
         import importlib.metadata
 

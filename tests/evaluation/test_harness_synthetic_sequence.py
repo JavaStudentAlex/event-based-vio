@@ -1,8 +1,11 @@
 import csv
 import json
+from types import SimpleNamespace
 
 import numpy as np
 
+import nav_benchmark.evaluation.harness as harness
+from nav_benchmark.datasets.mvsec import POSE_DTYPE
 from nav_benchmark.evaluation.harness import evaluate_run_directory, resolve_ground_truth_path
 from nav_benchmark.evaluation.metrics import EvalConfig
 from nav_benchmark.trajectory.export import export_project_csv
@@ -94,3 +97,30 @@ def test_evaluate_run_directory_with_generated_synthetic_ground_truth(tmp_path):
         metrics = json.load(f)
     assert metrics["runtime"]["latency_mean_ms"] == 2.5
     assert metrics["failures"]["failed_frame_count"] == 1
+
+
+def test_load_ground_truth_trajectory_converts_mvsec_poses(monkeypatch, tmp_path):
+    poses = np.empty(2, dtype=POSE_DTYPE)
+    poses["t"] = [0.0, 1.0]
+    poses["x"] = [1.0, 2.0]
+    poses["y"] = [3.0, 4.0]
+    poses["z"] = [5.0, 6.0]
+    poses["qx"] = [0.0, 0.0]
+    poses["qy"] = [0.0, 0.0]
+    poses["qz"] = [0.0, 0.0]
+    poses["qw"] = [1.0, 1.0]
+    monkeypatch.setattr(harness, "load_mvsec_sequence", lambda _path: SimpleNamespace(gt_poses=poses))
+
+    trajectory = harness.load_ground_truth_trajectory(tmp_path / "sample.h5")
+
+    assert trajectory.method == "ground_truth"
+    np.testing.assert_allclose(trajectory.timestamps, [0.0, 1.0])
+    np.testing.assert_allclose(trajectory.positions, [[1.0, 3.0, 5.0], [2.0, 4.0, 6.0]])
+    assert trajectory.health.tolist() == ["OK", "OK"]
+
+
+def test_load_ground_truth_trajectory_rejects_mvsec_without_poses(monkeypatch, tmp_path):
+    monkeypatch.setattr(harness, "load_mvsec_sequence", lambda _path: SimpleNamespace(gt_poses=None))
+
+    with np.testing.assert_raises_regex(ValueError, "No ground-truth poses"):
+        harness.load_ground_truth_trajectory(tmp_path / "empty.h5")

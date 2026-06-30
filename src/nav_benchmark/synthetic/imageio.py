@@ -40,6 +40,36 @@ def load_png_gray(path: str | Path) -> np.ndarray:
         return np.asarray(img.convert("L"), dtype=np.uint8)
 
 
+def _require_video_frames(frames: Sequence[np.ndarray]) -> None:
+    if not frames:
+        raise ValueError("write_video requires at least one frame")
+
+
+def _load_cv2_for_video():
+    try:
+        import cv2  # type: ignore
+    except Exception as exc:  # pragma: no cover - environment dependent
+        raise VideoBackendUnavailable(f"OpenCV not available for video writing: {exc}") from exc
+    return cv2
+
+
+def _video_writer(cv2, path: Path, fps: float, first_frame: np.ndarray):
+    height, width = first_frame.shape[:2]
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore[attr-defined]
+    writer = cv2.VideoWriter(str(path), fourcc, float(fps), (width, height))
+    if not writer.isOpened():  # pragma: no cover - environment dependent
+        raise VideoBackendUnavailable("OpenCV VideoWriter failed to open (missing codec/ffmpeg?)")
+    return writer
+
+
+def _write_video_frames(writer, frames: Sequence[np.ndarray]) -> None:
+    for frame in frames:
+        arr = np.asarray(frame)
+        if arr.ndim == 2:
+            arr = np.repeat(arr[:, :, None], 3, axis=2)
+        writer.write(arr[:, :, ::-1].astype(np.uint8))
+
+
 def write_video(frames: Sequence[np.ndarray], path: str | Path, fps: float) -> None:
     """Encode a sequence of RGB frames to an mp4 file (best-effort, via OpenCV).
 
@@ -47,26 +77,11 @@ def write_video(frames: Sequence[np.ndarray], path: str | Path, fps: float) -> N
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    if not frames:
-        raise ValueError("write_video requires at least one frame")
-
-    try:
-        import cv2  # type: ignore
-    except Exception as exc:  # pragma: no cover - environment dependent
-        raise VideoBackendUnavailable(f"OpenCV not available for video writing: {exc}") from exc
-
+    _require_video_frames(frames)
+    cv2 = _load_cv2_for_video()
     first = np.asarray(frames[0])
-    height, width = first.shape[:2]
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore[attr-defined]
-    writer = cv2.VideoWriter(str(path), fourcc, float(fps), (width, height))
-    if not writer.isOpened():  # pragma: no cover - environment dependent
-        raise VideoBackendUnavailable("OpenCV VideoWriter failed to open (missing codec/ffmpeg?)")
+    writer = _video_writer(cv2, path, fps, first)
     try:
-        for frame in frames:
-            arr = np.asarray(frame)
-            if arr.ndim == 2:
-                arr = np.repeat(arr[:, :, None], 3, axis=2)
-            # OpenCV expects BGR.
-            writer.write(arr[:, :, ::-1].astype(np.uint8))
+        _write_video_frames(writer, frames)
     finally:
         writer.release()

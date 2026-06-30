@@ -45,14 +45,22 @@ class HeadingScript:
             return headings[0]
         if t_s >= times[-1]:
             return headings[-1]
-        # Locate the bracketing keyframes and linearly interpolate.
-        for i in range(1, len(times)):
-            if t_s <= times[i]:
-                t0, t1 = times[i - 1], times[i]
-                h0, h1 = headings[i - 1], headings[i]
-                frac = (t_s - t0) / (t1 - t0) if t1 > t0 else 0.0
-                return h0 + frac * (h1 - h0)
-        return headings[-1]
+        return _interpolated_heading(t_s, times, headings)
+
+
+def _interpolated_heading(t_s: float, times: list[float], headings: list[float]) -> float:
+    index = _heading_segment_index(t_s, times)
+    t0, t1 = times[index - 1], times[index]
+    h0, h1 = headings[index - 1], headings[index]
+    frac = (t_s - t0) / (t1 - t0) if t1 > t0 else 0.0
+    return h0 + frac * (h1 - h0)
+
+
+def _heading_segment_index(t_s: float, times: list[float]) -> int:
+    for i in range(1, len(times)):
+        if t_s <= times[i]:
+            return i
+    return len(times) - 1
 
 
 class KinematicDroneController:

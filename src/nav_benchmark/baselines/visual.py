@@ -2,6 +2,7 @@ import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -100,6 +101,82 @@ def _initial_positions_from_gt(sequence: MvsecSequence, timestamps: np.ndarray) 
     return sampled_gt.positions, sampled_gt.orientations
 
 
+def _empty_pair_stats(
+    keypoints_prev: int = 0,
+    keypoints_curr: int = 0,
+    matches: int = 0,
+) -> PairTrackingStats:
+    return PairTrackingStats(
+        keypoints_prev=keypoints_prev,
+        keypoints_curr=keypoints_curr,
+        matches=matches,
+        inliers=0,
+        inlier_ratio=0.0,
+        translation_px=np.zeros(2, dtype=np.float64),
+        yaw_delta_rad=0.0,
+    )
+
+
+def _orb_features(prev_frame: np.ndarray, curr_frame: np.ndarray, config: FeatureVoConfig):
+    cv2 = _get_cv2()
+    orb = cv2.ORB_create(nfeatures=config.max_features)
+    prev_gray = _as_gray(prev_frame)
+    curr_gray = _as_gray(curr_frame)
+    keypoints_prev, descriptors_prev = orb.detectAndCompute(prev_gray, None)
+    keypoints_curr, descriptors_curr = orb.detectAndCompute(curr_gray, None)
+    return keypoints_prev, descriptors_prev, keypoints_curr, descriptors_curr
+
+
+def _keypoint_count(keypoints) -> int:
+    return 0 if keypoints is None else len(keypoints)
+
+
+def _keypoints_or_empty(keypoints):
+    if keypoints is None:
+        return []
+    return keypoints
+
+
+def _has_no_descriptors(descriptors_prev, descriptors_curr, kp_prev_count: int, kp_curr_count: int) -> bool:
+    return descriptors_prev is None or descriptors_curr is None or kp_prev_count == 0 or kp_curr_count == 0
+
+
+def _cross_checked_matches(descriptors_prev, descriptors_curr, max_matches: int):
+    cv2 = _get_cv2()
+    matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+    matches = sorted(matcher.match(descriptors_prev, descriptors_curr), key=lambda match: match.distance)
+    return matches[:max_matches]
+
+
+def _stats_from_affine(matches, prev_pts: np.ndarray, curr_pts: np.ndarray, affine, inlier_mask):
+    if affine is None or inlier_mask is None:
+        flows = curr_pts - prev_pts
+        return np.median(flows, axis=0).astype(np.float64), 0, 0.0, 0.0, None
+
+    inlier_values = inlier_mask.ravel().astype(bool)
+    inliers = int(np.sum(inlier_values))
+    inlier_ratio = float(inliers / len(matches)) if matches else 0.0
+    translation = affine[:, 2].astype(np.float64)
+    yaw_delta = float(math.atan2(affine[1, 0], affine[0, 0]))
+    return translation, inliers, inlier_ratio, yaw_delta, inlier_mask
+
+
+def _matched_points(keypoints_prev, keypoints_curr, matches) -> tuple[np.ndarray, np.ndarray]:
+    prev_pts = np.array([keypoints_prev[match.queryIdx].pt for match in matches], dtype=np.float32)
+    curr_pts = np.array([keypoints_curr[match.trainIdx].pt for match in matches], dtype=np.float32)
+    return prev_pts, curr_pts
+
+
+def _estimate_affine(prev_pts: np.ndarray, curr_pts: np.ndarray, config: FeatureVoConfig):
+    cv2 = _get_cv2()
+    return cv2.estimateAffinePartial2D(
+        prev_pts,
+        curr_pts,
+        method=cv2.RANSAC,
+        ransacReprojThreshold=config.ransac_reprojection_threshold_px,
+    )
+
+
 def _match_frame_pair(
     prev_frame: np.ndarray,
     curr_frame: np.ndarray,
@@ -109,68 +186,27 @@ def _match_frame_pair(
     if cv2 is None:
         return _match_frame_pair_numpy(prev_frame, curr_frame)
 
-    prev_gray = _as_gray(prev_frame)
-    curr_gray = _as_gray(curr_frame)
+    keypoints_prev, descriptors_prev, keypoints_curr, descriptors_curr = _orb_features(prev_frame, curr_frame, config)
 
-    orb = cv2.ORB_create(nfeatures=config.max_features)
-    keypoints_prev, descriptors_prev = orb.detectAndCompute(prev_gray, None)
-    keypoints_curr, descriptors_curr = orb.detectAndCompute(curr_gray, None)
+    kp_prev_count = _keypoint_count(keypoints_prev)
+    kp_curr_count = _keypoint_count(keypoints_curr)
 
-    kp_prev_count = 0 if keypoints_prev is None else len(keypoints_prev)
-    kp_curr_count = 0 if keypoints_curr is None else len(keypoints_curr)
+    if _has_no_descriptors(descriptors_prev, descriptors_curr, kp_prev_count, kp_curr_count):
+        stats = _empty_pair_stats(kp_prev_count, kp_curr_count)
+        return stats, (_keypoints_or_empty(keypoints_prev), _keypoints_or_empty(keypoints_curr), [], None)
 
-    if descriptors_prev is None or descriptors_curr is None or kp_prev_count == 0 or kp_curr_count == 0:
-        stats = PairTrackingStats(
-            keypoints_prev=kp_prev_count,
-            keypoints_curr=kp_curr_count,
-            matches=0,
-            inliers=0,
-            inlier_ratio=0.0,
-            translation_px=np.zeros(2, dtype=np.float64),
-            yaw_delta_rad=0.0,
-        )
-        return stats, (keypoints_prev or [], keypoints_curr or [], [], None)
-
-    matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-    matches = sorted(matcher.match(descriptors_prev, descriptors_curr), key=lambda match: match.distance)
-    matches = matches[: config.max_matches]
+    matches = _cross_checked_matches(descriptors_prev, descriptors_curr, config.max_matches)
 
     if len(matches) < config.min_matches:
-        stats = PairTrackingStats(
-            keypoints_prev=kp_prev_count,
-            keypoints_curr=kp_curr_count,
-            matches=len(matches),
-            inliers=0,
-            inlier_ratio=0.0,
-            translation_px=np.zeros(2, dtype=np.float64),
-            yaw_delta_rad=0.0,
-        )
+        stats = _empty_pair_stats(kp_prev_count, kp_curr_count, len(matches))
         return stats, (keypoints_prev, keypoints_curr, matches, None)
 
-    prev_pts = np.float32([keypoints_prev[match.queryIdx].pt for match in matches])
-    curr_pts = np.float32([keypoints_curr[match.trainIdx].pt for match in matches])
-    affine, inlier_mask = cv2.estimateAffinePartial2D(
-        prev_pts,
-        curr_pts,
-        method=cv2.RANSAC,
-        ransacReprojThreshold=config.ransac_reprojection_threshold_px,
+    prev_pts, curr_pts = _matched_points(keypoints_prev, keypoints_curr, matches)
+    affine, inlier_mask = _estimate_affine(prev_pts, curr_pts, config)
+
+    translation, inliers, inlier_ratio, yaw_delta, mask = _stats_from_affine(
+        matches, prev_pts, curr_pts, affine, inlier_mask
     )
-
-    if affine is None or inlier_mask is None:
-        flows = curr_pts - prev_pts
-        translation = np.median(flows, axis=0).astype(np.float64)
-        inliers = 0
-        inlier_ratio = 0.0
-        yaw_delta = 0.0
-        mask = None
-    else:
-        inlier_values = inlier_mask.ravel().astype(bool)
-        inliers = int(np.sum(inlier_values))
-        inlier_ratio = float(inliers / len(matches)) if matches else 0.0
-        translation = affine[:, 2].astype(np.float64)
-        yaw_delta = float(math.atan2(affine[1, 0], affine[0, 0]))
-        mask = inlier_mask
-
     stats = PairTrackingStats(
         keypoints_prev=kp_prev_count,
         keypoints_curr=kp_curr_count,
@@ -269,9 +305,88 @@ def _flow_direction_xy(stats: PairTrackingStats) -> np.ndarray:
     return direction / norm
 
 
+def _frame_delta_seconds(timestamps: np.ndarray, frame_index: int) -> float:
+    dt = float(timestamps[frame_index] - timestamps[frame_index - 1])
+    return dt if dt > 0.0 else 1e-6
+
+
+def _motion_confidence(
+    stats: PairTrackingStats,
+    modifier: float,
+    config: FeatureVoConfig,
+) -> float:
+    confidence = stats.confidence * modifier
+    if stats.matches < config.min_matches or stats.inliers < config.min_inliers:
+        confidence *= 0.35
+    return float(np.clip(confidence, 0.0, 1.0))
+
+
+def _maybe_write_debug_match(
+    config: FeatureVoConfig,
+    method: str,
+    frames: np.ndarray,
+    frame_index: int,
+    match_data: tuple[list, list, list, np.ndarray | None],
+    debug_written: int,
+) -> int:
+    if config.debug_match_dir is None or debug_written >= config.max_debug_match_images:
+        return debug_written
+    _write_debug_match_image(
+        frames[frame_index - 1],
+        frames[frame_index],
+        match_data,
+        config.debug_match_dir / f"{method}_matches_{frame_index:06d}.png",
+    )
+    return debug_written + 1
+
+
+def _motion_direction(stats: PairTrackingStats, gt_delta: np.ndarray, gt_step_m: float) -> np.ndarray:
+    direction = _flow_direction_xy(stats)
+    if np.linalg.norm(direction[:2]) > 1e-9 or gt_step_m <= 0.0:
+        return direction
+    return gt_delta / gt_step_m
+
+
+def _scaled_visual_step(
+    stats: PairTrackingStats,
+    confidence: float,
+    direction: np.ndarray,
+    gt_step_m: float,
+    last_velocity: np.ndarray,
+    dt: float,
+    config: FeatureVoConfig,
+) -> np.ndarray:
+    if confidence < config.degraded_confidence_threshold:
+        return last_velocity * dt * config.low_confidence_velocity_decay
+    if config.use_ground_truth_scale and gt_step_m > 0.0:
+        return direction * gt_step_m * config.scale_bias
+    return direction * float(np.linalg.norm(stats.translation_px)) * config.pixel_to_meter * config.scale_bias
+
+
+def _finite_step(step: np.ndarray) -> np.ndarray:
+    if np.all(np.isfinite(step)):
+        return step
+    return np.zeros(3, dtype=np.float64)
+
+
+def _next_orientation(
+    sequence: MvsecSequence,
+    previous_orientation: np.ndarray,
+    gt_orientation: np.ndarray,
+    stats: PairTrackingStats,
+    confidence: float,
+    config: FeatureVoConfig,
+) -> np.ndarray:
+    if confidence < config.degraded_confidence_threshold:
+        return previous_orientation
+    if sequence.gt_poses is not None and len(sequence.gt_poses) > 0:
+        return gt_orientation
+    return (Rotation.from_quat(previous_orientation) * Rotation.from_rotvec([0.0, 0.0, stats.yaw_delta_rad])).as_quat()
+
+
 class _FeatureVoBackend(BaseOdometryBackend):
-    method = "feature_vo"
-    required_streams: tuple[str, ...] = ()
+    method: ClassVar[str] = "feature_vo"
+    required_streams: ClassVar[tuple[str, ...]] = ()
 
     def _frames_and_timestamps(self, sequence: MvsecSequence) -> tuple[np.ndarray, np.ndarray]:
         raise NotImplementedError
@@ -285,7 +400,7 @@ class _FeatureVoBackend(BaseOdometryBackend):
     ) -> float:
         return 1.0
 
-    def run(self, sequence: MvsecSequence, *, config: FeatureVoConfig | None = None) -> Trajectory:  # noqa: C901
+    def run(self, sequence: MvsecSequence, *, config: FeatureVoConfig | None = None) -> Trajectory:
         cfg = config if config is not None else FeatureVoConfig()
         frames, timestamps = self._frames_and_timestamps(sequence)
         if len(timestamps) == 0:
@@ -306,52 +421,21 @@ class _FeatureVoBackend(BaseOdometryBackend):
         debug_written = 0
 
         for i in range(1, count):
-            dt = float(timestamps[i] - timestamps[i - 1])
-            if dt <= 0.0:
-                dt = 1e-6
-
+            dt = _frame_delta_seconds(timestamps, i)
             stats, match_data = _match_frame_pair(frames[i - 1], frames[i], cfg)
-            motion_confidence = stats.confidence * self._pair_confidence_modifier(sequence, timestamps, i, frames[i])
-            if stats.matches < cfg.min_matches or stats.inliers < cfg.min_inliers:
-                motion_confidence *= 0.35
-            confidence[i] = float(np.clip(motion_confidence, 0.0, 1.0))
-
-            if cfg.debug_match_dir is not None and debug_written < cfg.max_debug_match_images:
-                _write_debug_match_image(
-                    frames[i - 1],
-                    frames[i],
-                    match_data,
-                    cfg.debug_match_dir / f"{self.method}_matches_{i:06d}.png",
-                )
-                debug_written += 1
+            modifier = self._pair_confidence_modifier(sequence, timestamps, i, frames[i])
+            confidence[i] = _motion_confidence(stats, modifier, cfg)
+            debug_written = _maybe_write_debug_match(cfg, self.method, frames, i, match_data, debug_written)
 
             gt_delta = gt_positions[i] - gt_positions[i - 1]
             gt_step_m = float(np.linalg.norm(gt_delta))
-            direction = _flow_direction_xy(stats)
-            if np.linalg.norm(direction[:2]) <= 1e-9 and gt_step_m > 0.0:
-                direction = gt_delta / gt_step_m
-
-            if confidence[i] < cfg.degraded_confidence_threshold:
-                step = last_velocity * dt * cfg.low_confidence_velocity_decay
-            elif cfg.use_ground_truth_scale and gt_step_m > 0.0:
-                step = direction * gt_step_m * cfg.scale_bias
-            else:
-                step = direction * float(np.linalg.norm(stats.translation_px)) * cfg.pixel_to_meter * cfg.scale_bias
-
-            if not np.all(np.isfinite(step)):
-                step = np.zeros(3, dtype=np.float64)
+            direction = _motion_direction(stats, gt_delta, gt_step_m)
+            step = _finite_step(_scaled_visual_step(stats, confidence[i], direction, gt_step_m, last_velocity, dt, cfg))
 
             positions[i] = positions[i - 1] + step
-            if confidence[i] < cfg.degraded_confidence_threshold:
-                orientations[i] = orientations[i - 1]
-            elif sequence.gt_poses is not None and len(sequence.gt_poses) > 0:
-                orientations[i] = gt_orientations[i]
-            else:
-                yaw_delta = stats.yaw_delta_rad
-                orientations[i] = (
-                    Rotation.from_quat(orientations[i - 1]) * Rotation.from_rotvec([0.0, 0.0, yaw_delta])
-                ).as_quat()
-
+            orientations[i] = _next_orientation(
+                sequence, orientations[i - 1], gt_orientations[i], stats, confidence[i], cfg
+            )
             last_velocity = step / dt
 
         velocities = velocities_from_positions(timestamps, positions)
@@ -377,8 +461,8 @@ class _FeatureVoBackend(BaseOdometryBackend):
 class RgbVoBackend(_FeatureVoBackend):
     """Feature-based monocular RGB visual odometry baseline."""
 
-    method = "rgb_vo"
-    required_streams = ("images",)
+    method: ClassVar[str] = "rgb_vo"
+    required_streams: ClassVar[tuple[str, ...]] = ("images",)
 
     def _frames_and_timestamps(self, sequence: MvsecSequence) -> tuple[np.ndarray, np.ndarray]:
         if sequence.images is None or sequence.image_timestamps is None or len(sequence.image_timestamps) == 0:
@@ -389,8 +473,8 @@ class RgbVoBackend(_FeatureVoBackend):
 class EventVoBackend(_FeatureVoBackend):
     """Event-frame visual odometry baseline using accumulated event images."""
 
-    method = "event_vo"
-    required_streams = ("event_frames",)
+    method: ClassVar[str] = "event_vo"
+    required_streams: ClassVar[tuple[str, ...]] = ("event_frames",)
 
     def _frames_and_timestamps(self, sequence: MvsecSequence) -> tuple[np.ndarray, np.ndarray]:
         if (

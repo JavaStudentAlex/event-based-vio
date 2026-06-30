@@ -4,7 +4,8 @@ from unittest import mock
 import numpy as np
 
 from nav_benchmark.baselines.imu import ImuOnlyConfig
-from nav_benchmark.run import main
+from nav_benchmark.run import _export_ensemble_artifacts, main
+from nav_benchmark.trajectory.models import Trajectory
 
 
 def test_manifest_and_notes_generation(tmp_path):
@@ -160,3 +161,37 @@ def test_manifest_and_notes_with_degraded_lost_transitions(tmp_path):
     assert "LOST" in notes
     assert "duration" in notes
     assert "No degraded or lost intervals were detected" not in notes
+
+
+def test_export_ensemble_artifacts_writes_weights_and_plot(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_plot(trajectory, output_path, sequence):
+        calls.append((trajectory.method, output_path, sequence))
+        output_path.with_suffix(".png").write_bytes(b"plot")
+
+    monkeypatch.setattr("nav_benchmark.run.write_ensemble_weight_plot", fake_plot)
+
+    timestamps = np.array([0.0, 1.0])
+    trajectory = Trajectory(
+        timestamps=timestamps,
+        method="ensemble",
+        positions=np.zeros((2, 3)),
+        orientations=np.array([[0.0, 0.0, 0.0, 1.0]] * 2),
+        extra_columns={
+            "w_imu": np.array([0.5, 0.4]),
+            "w_rgb": np.array([0.1, 0.1]),
+            "w_event": np.array([0.1, 0.1]),
+            "w_event_imu": np.array([0.1, 0.1]),
+            "w_image_imu": np.array([0.1, 0.15]),
+            "w_multimodal": np.array([0.1, 0.15]),
+        },
+    )
+    args = mock.Mock(sequence="unit_seq")
+    messages = []
+
+    _export_ensemble_artifacts(args, trajectory, tmp_path, messages.append)
+
+    assert (tmp_path / "ensemble_weights.csv").exists()
+    assert calls == [("ensemble", tmp_path / "ensemble_weights", "unit_seq")]
+    assert any("Exported ensemble weights" in message for message in messages)

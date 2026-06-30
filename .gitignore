@@ -67,4 +67,5 @@ dummy_output
 milestone_1_event_imu_vio.md
 .claude
 runs
-google_earth_synthetic_sequence_task.md
+tmp_runs
+slam_ensemble_implementation_task.md

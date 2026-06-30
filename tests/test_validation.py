@@ -97,6 +97,13 @@ def test_check_tum_file(tmp_path):
     res = check_tum_file(path)
     assert not res.passed
 
+    # Directory instead of file (raises Exception in _load_tum_lines)
+    dir_path = tmp_path / "some_dir"
+    dir_path.mkdir()
+    res = check_tum_file(dir_path)
+    assert not res.passed
+    assert "Failed to read TUM file" in res.message
+
     # Malformed row (not 8 elements)
     with open(path, "w") as f:
         f.write("1.0 2.0 3.0\n")

@@ -42,6 +42,44 @@ def _find_column(fieldnames: set[str], candidates: tuple[str, ...]) -> str | Non
     return None
 
 
+def _resolve_float_column(
+    rows: list[dict[str, str]],
+    fieldnames: set[str],
+    candidates: tuple[str, ...],
+    path: Path,
+    default: float | None,
+) -> tuple[str | None, np.ndarray | None]:
+    column = _find_column(fieldnames, candidates)
+    if column is not None:
+        return column, None
+    if default is None:
+        raise ValueError(f"{path} is missing one of the required columns: {candidates}")
+    return None, np.full(len(rows), default, dtype=np.float64)
+
+
+def _empty_float_cell(raw: str, column: str, row_number: int, path: Path, default: float | None) -> tuple[bool, float]:
+    if raw == "":
+        if default is None:
+            raise ValueError(f"{path} has an empty value in required column {column!r} at row {row_number}")
+        return True, default
+    return False, 0.0
+
+
+def _parse_float_cell(raw: str, column: str, row_number: int, path: Path, default: float | None) -> float:
+    is_empty, empty_value = _empty_float_cell(raw, column, row_number, path, default)
+    if is_empty:
+        return empty_value
+    try:
+        return float(raw)
+    except ValueError as err:
+        raise ValueError(f"{path} has a non-numeric value in column {column!r} at row {row_number}") from err
+
+
+def _validate_finite_column(values: np.ndarray, column: str, path: Path) -> None:
+    if not np.all(np.isfinite(values)):
+        raise ValueError(f"{path} has non-finite values in column {column!r}")
+
+
 def _float_column(
     rows: list[dict[str, str]],
     fieldnames: set[str],
@@ -50,27 +88,17 @@ def _float_column(
     *,
     default: float | None = None,
 ) -> np.ndarray:
-    column = _find_column(fieldnames, candidates)
+    column, default_values = _resolve_float_column(rows, fieldnames, candidates, path, default)
+    if default_values is not None:
+        return default_values
     if column is None:
-        if default is None:
-            raise ValueError(f"{path} is missing one of the required columns: {candidates}")
-        return np.full(len(rows), default, dtype=np.float64)
+        raise ValueError(f"Could not resolve float column from {candidates}")
 
     values = np.empty(len(rows), dtype=np.float64)
     for i, row in enumerate(rows):
         raw = row.get(column, "")
-        if raw == "":
-            if default is None:
-                raise ValueError(f"{path} has an empty value in required column {column!r} at row {i + 2}")
-            values[i] = default
-            continue
-        try:
-            values[i] = float(raw)
-        except ValueError as err:
-            raise ValueError(f"{path} has a non-numeric value in column {column!r} at row {i + 2}") from err
-
-    if not np.all(np.isfinite(values)):
-        raise ValueError(f"{path} has non-finite values in column {column!r}")
+        values[i] = _parse_float_cell(raw, column, i + 2, path, default)
+    _validate_finite_column(values, column, path)
     return values
 
 
@@ -79,19 +107,58 @@ def _check_monotonic(timestamps: np.ndarray, path: Path) -> None:
         raise ValueError(f"{path} timestamps are not monotonic")
 
 
+def _default_health_column(count: int) -> np.ndarray:
+    return np.array([PoseHealth.OK.value] * count, dtype=object)
+
+
+def _health_cell(row: dict[str, str], column: str, valid: set[str], row_number: int, path: Path) -> str:
+    value = row.get(column, "") or PoseHealth.OK.value
+    if value not in valid:
+        raise ValueError(f"{path} has invalid health value {value!r} at row {row_number}")
+    return value
+
+
 def _health_column(rows: list[dict[str, str]], fieldnames: set[str], path: Path) -> np.ndarray:
     column = _find_column(fieldnames, ("health",))
     if column is None:
-        return np.array([PoseHealth.OK.value] * len(rows), dtype=object)
+        return _default_health_column(len(rows))
 
     valid = {state.value for state in PoseHealth}
-    values = []
-    for i, row in enumerate(rows):
-        value = row.get(column, "") or PoseHealth.OK.value
-        if value not in valid:
-            raise ValueError(f"{path} has invalid health value {value!r} at row {i + 2}")
-        values.append(value)
+    values = [_health_cell(row, column, valid, i + 2, path) for i, row in enumerate(rows)]
     return np.array(values, dtype=object)
+
+
+def _quat_from_columns(rows: list[dict[str, str]], fieldnames: set[str], path: Path) -> np.ndarray:
+    return np.stack(
+        [
+            _float_column(rows, fieldnames, ("qx",), path),
+            _float_column(rows, fieldnames, ("qy",), path),
+            _float_column(rows, fieldnames, ("qz",), path),
+            _float_column(rows, fieldnames, ("qw",), path),
+        ],
+        axis=1,
+    )
+
+
+def _quat_from_yaw(rows: list[dict[str, str]], fieldnames: set[str], path: Path) -> np.ndarray:
+    yaw = np.radians(_float_column(rows, fieldnames, ("yaw_deg",), path))
+    quat = np.zeros((yaw.size, 4), dtype=np.float64)
+    quat[:, 2] = np.sin(0.5 * yaw)
+    quat[:, 3] = np.cos(0.5 * yaw)
+    return quat
+
+
+def _identity_quaternions(count: int) -> np.ndarray:
+    quat = np.zeros((count, 4), dtype=np.float64)
+    quat[:, 3] = 1.0
+    return quat
+
+
+def _normalize_quaternion_rows(quat: np.ndarray, path: Path) -> np.ndarray:
+    norms = np.linalg.norm(quat, axis=1)
+    if np.any(norms == 0.0):
+        raise ValueError(f"{path} has a zero-norm orientation quaternion")
+    return quat / norms[:, np.newaxis]
 
 
 def read_synthetic_imu_csv(path: str | Path) -> np.ndarray:
@@ -131,28 +198,12 @@ def read_synthetic_events_csv(path: str | Path) -> np.ndarray:
 
 def _trajectory_quaternions(rows: list[dict[str, str]], fieldnames: set[str], path: Path) -> np.ndarray:
     if all(name in fieldnames for name in ("qx", "qy", "qz", "qw")):
-        quat = np.stack(
-            [
-                _float_column(rows, fieldnames, ("qx",), path),
-                _float_column(rows, fieldnames, ("qy",), path),
-                _float_column(rows, fieldnames, ("qz",), path),
-                _float_column(rows, fieldnames, ("qw",), path),
-            ],
-            axis=1,
-        )
+        quat = _quat_from_columns(rows, fieldnames, path)
     elif "yaw_deg" in fieldnames:
-        yaw = np.radians(_float_column(rows, fieldnames, ("yaw_deg",), path))
-        quat = np.zeros((yaw.size, 4), dtype=np.float64)
-        quat[:, 2] = np.sin(0.5 * yaw)
-        quat[:, 3] = np.cos(0.5 * yaw)
+        quat = _quat_from_yaw(rows, fieldnames, path)
     else:
-        quat = np.zeros((len(rows), 4), dtype=np.float64)
-        quat[:, 3] = 1.0
-
-    norms = np.linalg.norm(quat, axis=1)
-    if np.any(norms == 0.0):
-        raise ValueError(f"{path} has a zero-norm orientation quaternion")
-    return quat / norms[:, np.newaxis]
+        quat = _identity_quaternions(len(rows))
+    return _normalize_quaternion_rows(quat, path)
 
 
 def read_synthetic_ground_truth_csv(path: str | Path) -> Trajectory:
@@ -230,6 +281,32 @@ def _timestamped_image_rows(timestamp_path: Path) -> tuple[list[float], list[str
     return timestamps, rel_paths
 
 
+def _image_sequence_paths(
+    root: Path,
+    directory: Path,
+    timestamp_path: Path | None,
+    fallback_glob: str,
+) -> tuple[list[Path], list[float], list[str]]:
+    if timestamp_path is not None and timestamp_path.exists():
+        timestamps, rel_paths = _timestamped_image_rows(timestamp_path)
+        return [root / rel for rel in rel_paths], timestamps, rel_paths
+    paths = sorted(directory.glob(fallback_glob))
+    timestamps = [float(i) for i in range(len(paths))]
+    return paths, timestamps, [str(path.relative_to(root)) for path in paths]
+
+
+def _load_image_frames(root: Path, paths: list[Path], rel_paths: list[str]) -> tuple[list[np.ndarray], list[str]]:
+    images = []
+    resolved_rel_paths = []
+    for path, _rel in zip(paths, rel_paths, strict=True):
+        resolved = Path(path)
+        if not resolved.exists():
+            raise FileNotFoundError(f"Referenced image frame not found: {resolved}")
+        images.append(load_png_rgb(resolved))
+        resolved_rel_paths.append(str(resolved.relative_to(root)))
+    return images, resolved_rel_paths
+
+
 def _read_image_sequence(
     root: Path,
     image_dir: str,
@@ -241,42 +318,45 @@ def _read_image_sequence(
     if not directory.exists():
         return None, None, []
 
-    if timestamp_path is not None and timestamp_path.exists():
-        timestamps, rel_paths = _timestamped_image_rows(timestamp_path)
-        paths = [root / rel for rel in rel_paths]
-    else:
-        paths = sorted(directory.glob(fallback_glob))
-        timestamps = [float(i) for i in range(len(paths))]
-        rel_paths = [str(path.relative_to(root)) for path in paths]
-
+    paths, timestamps, rel_paths = _image_sequence_paths(root, directory, timestamp_path, fallback_glob)
     if not paths:
         return None, None, []
 
-    images = []
-    resolved_rel_paths = []
-    for path, _rel in zip(paths, rel_paths, strict=True):
-        resolved = Path(path)
-        if not resolved.exists():
-            raise FileNotFoundError(f"Referenced image frame not found: {resolved}")
-        images.append(load_png_rgb(resolved))
-        resolved_rel_paths.append(str(resolved.relative_to(root)))
-
+    images, resolved_rel_paths = _load_image_frames(root, paths, rel_paths)
     return np.stack(images, axis=0), np.asarray(timestamps, dtype=np.float64), resolved_rel_paths
+
+
+def _event_frame_timestamps_from_metadata(timestamp_path: Path, frame_count: int) -> np.ndarray | None:
+    if not timestamp_path.exists():
+        return None
+    rows, fieldnames = _read_dict_rows(timestamp_path)
+    event_time_col = _find_column(fieldnames, ("t_event_s", "timestamp_s", "timestamp", "t"))
+    if event_time_col is None or len(rows) != frame_count:
+        return None
+    values = np.array([float(row[event_time_col]) for row in rows], dtype=np.float64)
+    _check_monotonic(values, timestamp_path)
+    return values
+
+
+def _can_interpolate_event_frame_timestamps(frame_count: int, events: np.ndarray | None) -> bool:
+    return events is not None and len(events) > 0 and frame_count > 1
+
+
+def _event_frame_timestamps_from_events(frame_count: int, events: np.ndarray | None) -> np.ndarray | None:
+    if not _can_interpolate_event_frame_timestamps(frame_count, events):
+        return None
+    if events is None:
+        return None
+    return np.linspace(float(events["t"][0]), float(events["t"][-1]), frame_count, dtype=np.float64)
 
 
 def _read_event_frame_timestamps(root: Path, frame_count: int, events: np.ndarray | None) -> np.ndarray:
     timestamp_path = root / "metadata" / "event_timestamps.csv"
-    if timestamp_path.exists():
-        rows, fieldnames = _read_dict_rows(timestamp_path)
-        event_time_col = _find_column(fieldnames, ("t_event_s", "timestamp_s", "timestamp", "t"))
-        if event_time_col is not None and len(rows) == frame_count:
-            values = np.array([float(row[event_time_col]) for row in rows], dtype=np.float64)
-            _check_monotonic(values, timestamp_path)
-            return values
-
-    if events is not None and len(events) > 0 and frame_count > 1:
-        return np.linspace(float(events["t"][0]), float(events["t"][-1]), frame_count, dtype=np.float64)
-    return np.arange(frame_count, dtype=np.float64)
+    timestamps = _event_frame_timestamps_from_metadata(timestamp_path, frame_count)
+    if timestamps is not None:
+        return timestamps
+    timestamps = _event_frame_timestamps_from_events(frame_count, events)
+    return timestamps if timestamps is not None else np.arange(frame_count, dtype=np.float64)
 
 
 def _time_range(timestamps: np.ndarray) -> tuple[float, float]:
@@ -293,6 +373,79 @@ def _resolve_synthetic_paths(path: Path) -> tuple[Path, Path, Path, Path]:
     return root, path, root / "ground_truth" / "trajectory.csv", root / "events" / "events.csv"
 
 
+def _register_stream(
+    time_ranges: dict[str, tuple[float, float]],
+    sample_counts: dict[str, int],
+    name: str,
+    timestamps: np.ndarray,
+) -> None:
+    time_ranges[name] = _time_range(timestamps)
+    sample_counts[name] = int(timestamps.size)
+
+
+def _load_ground_truth_stream(
+    gt_path: Path,
+    diagnostics: LoadDiagnostics,
+    time_ranges: dict[str, tuple[float, float]],
+    sample_counts: dict[str, int],
+) -> np.ndarray | None:
+    if not gt_path.exists():
+        diagnostics.missing_streams.append("gt_poses")
+        return None
+    gt = read_synthetic_ground_truth_csv(gt_path)
+    _register_stream(time_ranges, sample_counts, "gt_poses", gt.timestamps)
+    return trajectory_to_pose_array(gt)
+
+
+def _load_events_stream(
+    events_path: Path,
+    diagnostics: LoadDiagnostics,
+    time_ranges: dict[str, tuple[float, float]],
+    sample_counts: dict[str, int],
+) -> np.ndarray | None:
+    if not events_path.exists():
+        diagnostics.missing_streams.append("events")
+        return None
+    events = read_synthetic_events_csv(events_path)
+    _register_stream(time_ranges, sample_counts, "events", events["t"])
+    return events
+
+
+def _load_rgb_stream(
+    root: Path,
+    diagnostics: LoadDiagnostics,
+    time_ranges: dict[str, tuple[float, float]],
+    sample_counts: dict[str, int],
+) -> tuple[np.ndarray | None, np.ndarray | None, list[str]]:
+    images, image_timestamps, image_paths = _read_image_sequence(root, "rgb", root / "metadata" / "rgb_timestamps.csv")
+    if images is None or image_timestamps is None:
+        diagnostics.missing_streams.append("images")
+        return images, image_timestamps, image_paths
+    _register_stream(time_ranges, sample_counts, "images", image_timestamps)
+    return images, image_timestamps, image_paths
+
+
+def _load_event_frame_stream(
+    root: Path,
+    events: np.ndarray | None,
+    diagnostics: LoadDiagnostics,
+    time_ranges: dict[str, tuple[float, float]],
+    sample_counts: dict[str, int],
+) -> tuple[np.ndarray | None, np.ndarray | None, list[str]]:
+    event_frames, event_frame_timestamps, event_frame_paths = _read_image_sequence(
+        root,
+        "events/event_frames",
+        None,
+        fallback_glob="*.png",
+    )
+    if event_frames is None:
+        diagnostics.missing_streams.append("event_frames")
+        return event_frames, event_frame_timestamps, event_frame_paths
+    event_frame_timestamps = _read_event_frame_timestamps(root, int(event_frames.shape[0]), events)
+    _register_stream(time_ranges, sample_counts, "event_frames", event_frame_timestamps)
+    return event_frames, event_frame_timestamps, event_frame_paths
+
+
 def load_synthetic_sequence(path: str | Path, sequence_name: str | None = None) -> MvsecSequence:
     """Load a generated synthetic sequence directory into ``MvsecSequence``."""
     root, imu_path, gt_path, events_path = _resolve_synthetic_paths(Path(path))
@@ -304,42 +457,12 @@ def load_synthetic_sequence(path: str | Path, sequence_name: str | None = None) 
     time_ranges["imu"] = _time_range(imu["t"])
     sample_counts["imu"] = int(imu.size)
 
-    gt_poses = None
-    if gt_path.exists():
-        gt = read_synthetic_ground_truth_csv(gt_path)
-        gt_poses = trajectory_to_pose_array(gt)
-        time_ranges["gt_poses"] = _time_range(gt.timestamps)
-        sample_counts["gt_poses"] = int(gt.timestamps.size)
-    else:
-        diagnostics.missing_streams.append("gt_poses")
-
-    images, image_timestamps, image_paths = _read_image_sequence(root, "rgb", root / "metadata" / "rgb_timestamps.csv")
-    if images is not None and image_timestamps is not None:
-        time_ranges["images"] = _time_range(image_timestamps)
-        sample_counts["images"] = int(image_timestamps.size)
-    else:
-        diagnostics.missing_streams.append("images")
-
-    events = None
-    if events_path.exists():
-        events = read_synthetic_events_csv(events_path)
-        time_ranges["events"] = _time_range(events["t"])
-        sample_counts["events"] = int(events.size)
-    else:
-        diagnostics.missing_streams.append("events")
-
-    event_frames, event_frame_timestamps, event_frame_paths = _read_image_sequence(
-        root,
-        "events/event_frames",
-        None,
-        fallback_glob="*.png",
+    gt_poses = _load_ground_truth_stream(gt_path, diagnostics, time_ranges, sample_counts)
+    images, image_timestamps, image_paths = _load_rgb_stream(root, diagnostics, time_ranges, sample_counts)
+    events = _load_events_stream(events_path, diagnostics, time_ranges, sample_counts)
+    event_frames, event_frame_timestamps, event_frame_paths = _load_event_frame_stream(
+        root, events, diagnostics, time_ranges, sample_counts
     )
-    if event_frames is not None:
-        event_frame_timestamps = _read_event_frame_timestamps(root, int(event_frames.shape[0]), events)
-        time_ranges["event_frames"] = _time_range(event_frame_timestamps)
-        sample_counts["event_frames"] = int(event_frame_timestamps.size)
-    else:
-        diagnostics.missing_streams.append("event_frames")
 
     return MvsecSequence(
         metadata=SequenceMetadata(

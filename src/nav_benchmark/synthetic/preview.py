@@ -30,30 +30,50 @@ def _read_rgb_index(root: Path) -> list[tuple[float, Path]]:
     return out
 
 
-def write_rgb_preview(root: str | Path, fps: float = 30.0, overlay: bool = True, log=print) -> bool:
-    """Write ``preview/rgb_preview.mp4`` from saved RGB frames. Returns True if written."""
-    root = Path(root)
-    frames_index = _read_rgb_index(root)
+def _load_raw_states(root: Path) -> np.ndarray | None:
     state_path = root / "metadata" / "raw_state_log.csv"
-    states = np.loadtxt(state_path, delimiter=",", skiprows=1, ndmin=2) if state_path.exists() else None
+    if not state_path.exists():
+        return None
+    return np.loadtxt(state_path, delimiter=",", skiprows=1, ndmin=2)
 
+
+def _overlay_rgb_telemetry(img: Image.Image, timestamp: float, state_row: np.ndarray) -> None:
+    _, _, _, alt, heading, speed = state_row
+    draw = ImageDraw.Draw(img)
+    draw.text(
+        (6, 6),
+        f"t={timestamp:6.2f}s hdg={heading:6.1f} v={speed:4.1f} alt={alt:6.1f}",
+        fill=(255, 255, 0),
+    )
+
+
+def _rgb_preview_frames(root: Path, overlay: bool) -> list[np.ndarray]:
+    states = _load_raw_states(root)
     frames: list[np.ndarray] = []
-    for i, (t, path) in enumerate(frames_index):
+    for i, (timestamp, path) in enumerate(_read_rgb_index(root)):
         img = Image.fromarray(load_png_rgb(path))
         if overlay and states is not None and i < states.shape[0]:
-            _, _, _, alt, heading, speed = states[i]
-            draw = ImageDraw.Draw(img)
-            draw.text((6, 6), f"t={t:6.2f}s hdg={heading:6.1f} v={speed:4.1f} alt={alt:6.1f}", fill=(255, 255, 0))
+            _overlay_rgb_telemetry(img, timestamp, states[i])
         frames.append(np.asarray(img, dtype=np.uint8))
+    return frames
 
-    out = root / "preview" / "rgb_preview.mp4"
+
+def _write_preview_video(frames: list[np.ndarray], out: Path, fps: float, label: str, log) -> bool:
     try:
         write_video(frames, out, fps=fps)
         log(f"Wrote {out}")
         return True
     except (VideoBackendUnavailable, ValueError) as exc:
-        log(f"WARNING: skipping rgb preview mp4 ({exc})")
+        log(f"WARNING: skipping {label} preview mp4 ({exc})")
         return False
+
+
+def write_rgb_preview(root: str | Path, fps: float = 30.0, overlay: bool = True, log=print) -> bool:
+    """Write ``preview/rgb_preview.mp4`` from saved RGB frames. Returns True if written."""
+    root = Path(root)
+    return _write_preview_video(
+        _rgb_preview_frames(root, overlay), root / "preview" / "rgb_preview.mp4", fps, "rgb", log
+    )
 
 
 def write_events_preview_from_frames(root: str | Path, fps: float = 20.0, log=print) -> bool:
@@ -64,14 +84,7 @@ def write_events_preview_from_frames(root: str | Path, fps: float = 20.0, log=pr
         log("WARNING: no event frames found for events preview")
         return False
     frames = [load_png_rgb(p) for p in frame_paths]
-    out = root / "preview" / "events_preview.mp4"
-    try:
-        write_video(frames, out, fps=fps)
-        log(f"Wrote {out}")
-        return True
-    except (VideoBackendUnavailable, ValueError) as exc:
-        log(f"WARNING: skipping events preview mp4 ({exc})")
-        return False
+    return _write_preview_video(frames, root / "preview" / "events_preview.mp4", fps, "events", log)
 
 
 def write_trajectory_preview(root: str | Path, log=print) -> bool:

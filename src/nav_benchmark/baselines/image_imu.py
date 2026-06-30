@@ -1,19 +1,15 @@
 import time
 from dataclasses import dataclass, field
 
-import numpy as np
-
 from nav_benchmark.baselines.base import BaseOdometryBackend
 from nav_benchmark.baselines.common import (
-    health_from_confidence,
-    interpolate_trajectory,
-    latency_per_sample_ms,
+    fuse_imu_and_visual,
 )
-from nav_benchmark.baselines.event_imu import _default_imu_config_from_sequence, _weighted_quaternion_blend
+from nav_benchmark.baselines.event_imu import _default_imu_config_from_sequence
 from nav_benchmark.baselines.imu import ImuOnlyBackend, ImuOnlyConfig
 from nav_benchmark.baselines.visual import FeatureVoConfig, RgbVoBackend
 from nav_benchmark.datasets.mvsec import MvsecSequence
-from nav_benchmark.trajectory.models import PoseHealth, Trajectory
+from nav_benchmark.trajectory.models import Trajectory
 
 
 @dataclass
@@ -35,60 +31,28 @@ class ImageImuBackend(BaseOdometryBackend):
     required_streams = ("imu", "images")
 
     def run(self, sequence: MvsecSequence, *, config: ImageImuConfig | None = None) -> Trajectory:
-        cfg = config if config is not None else ImageImuConfig()
         start_time = time.perf_counter()
+        if config is None:
+            config = ImageImuConfig()
 
-        imu_config = cfg.imu_config if cfg.imu_config is not None else _default_imu_config_from_sequence(sequence)
+        if config.imu_config is None:  # noqa: SIM108
+            imu_config = _default_imu_config_from_sequence(sequence)
+        else:
+            imu_config = config.imu_config
+
         imu_trajectory = ImuOnlyBackend().run(sequence, config=imu_config)
-        rgb_trajectory = RgbVoBackend().run(sequence, config=cfg.rgb_vo_config)
+        rgb_trajectory = RgbVoBackend().run(sequence, config=config.rgb_vo_config)
 
-        rgb_on_imu = interpolate_trajectory(rgb_trajectory, imu_trajectory.timestamps)
-        rgb_confidence = np.where(
-            rgb_on_imu.confidence >= cfg.min_image_confidence_for_correction,
-            rgb_on_imu.confidence,
-            0.0,
-        )
-        correction_weight = np.clip(cfg.image_correction_gain * rgb_confidence, 0.0, cfg.image_correction_gain)
-
-        positions = (1.0 - correction_weight[:, np.newaxis]) * imu_trajectory.positions
-        positions += correction_weight[:, np.newaxis] * rgb_on_imu.positions
-
-        imu_velocity = imu_trajectory.velocities if imu_trajectory.velocities is not None else np.zeros_like(positions)
-        velocities = (1.0 - correction_weight[:, np.newaxis]) * imu_velocity
-        velocities += correction_weight[:, np.newaxis] * rgb_on_imu.velocities
-
-        orientations = _weighted_quaternion_blend(
-            imu_trajectory.orientations, rgb_on_imu.orientations, correction_weight
-        )
-
-        imu_confidence = (
-            imu_trajectory.confidence
-            if imu_trajectory.confidence is not None
-            else np.ones(len(imu_trajectory.timestamps))
-        )
-        confidence = np.clip(0.40 * imu_confidence + 0.60 * rgb_on_imu.confidence, 0.0, 1.0)
-        confidence = np.where(rgb_on_imu.in_range, confidence, np.minimum(confidence, 0.40))
-
-        health = health_from_confidence(
-            confidence,
-            ok_threshold=cfg.ok_confidence_threshold,
-            degraded_threshold=cfg.degraded_confidence_threshold,
-        )
-        health[confidence <= 0.0] = PoseHealth.INVALID.value
-
-        latency_ms = latency_per_sample_ms(start_time, len(imu_trajectory.timestamps))
-        if imu_trajectory.latency_ms is not None:
-            latency_ms += imu_trajectory.latency_ms
-        if rgb_trajectory.latency_ms is not None and len(rgb_trajectory.latency_ms) > 0:
-            latency_ms += float(np.nanmean(rgb_trajectory.latency_ms))
-
-        return Trajectory(
-            timestamps=imu_trajectory.timestamps,
+        fused_trajectory = fuse_imu_and_visual(
+            imu_trajectory=imu_trajectory,
+            visual_trajectory=rgb_trajectory,
+            visual_correction_gain=config.image_correction_gain,
+            min_visual_confidence_for_correction=config.min_image_confidence_for_correction,
+            ok_confidence_threshold=config.ok_confidence_threshold,
+            degraded_confidence_threshold=config.degraded_confidence_threshold,
             method=self.method,
-            positions=positions,
-            orientations=orientations,
-            velocities=velocities,
-            confidence=confidence,
-            health=health,
-            latency_ms=latency_ms,
+            base_imu_confidence=0.40,
+            visual_confidence_weight=0.60,
+            start_time=start_time,
         )
+        return fused_trajectory

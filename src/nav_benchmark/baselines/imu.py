@@ -31,6 +31,70 @@ class ImuOnlyConfig:
         self.initial_velocity = np.asarray(self.initial_velocity, dtype=np.float64)
 
 
+def _require_imu(sequence: MvsecSequence):
+    if sequence.imu is None or len(sequence.imu) == 0:
+        raise ValueError("IMU data is missing or empty in the sequence")
+    return sequence.imu
+
+
+def _initial_state_arrays(count: int, config: ImuOnlyConfig) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    positions = np.zeros((count, 3), dtype=np.float64)
+    orientations = np.zeros((count, 4), dtype=np.float64)
+    velocities = np.zeros((count, 3), dtype=np.float64)
+    health = np.empty(count, dtype=object)
+    positions[0] = config.initial_position
+    orientations[0] = config.initial_orientation
+    velocities[0] = config.initial_velocity
+    health[0] = PoseHealth.OK.value
+    return positions, orientations, velocities, health
+
+
+def _positive_dt(timestamps: np.ndarray, index: int) -> float:
+    dt = timestamps[index + 1] - timestamps[index]
+    return float(dt) if dt > 0 else 1e-6
+
+
+def _integrated_orientation(orientation: np.ndarray, omega: np.ndarray, dt: float) -> Rotation:
+    return Rotation.from_quat(orientation) * Rotation.from_rotvec(omega * dt)
+
+
+def _body_acceleration(imu, index: int) -> np.ndarray:
+    return np.array([imu["ax"][index], imu["ay"][index], imu["az"][index]], dtype=np.float64)
+
+
+def _angular_velocity(imu, index: int) -> np.ndarray:
+    return np.array([imu["gx"][index], imu["gy"][index], imu["gz"][index]], dtype=np.float64)
+
+
+def _is_lost(current_health: str, elapsed: float, distance: float, config: ImuOnlyConfig) -> bool:
+    return (
+        current_health == PoseHealth.LOST.value
+        or elapsed > config.lost_time_threshold
+        or distance > config.lost_drift_threshold
+    )
+
+
+def _is_degraded(current_health: str, elapsed: float, distance: float, config: ImuOnlyConfig) -> bool:
+    return (
+        current_health == PoseHealth.DEGRADED.value
+        or elapsed > config.degraded_time_threshold
+        or distance > config.degraded_drift_threshold
+    )
+
+
+def _next_imu_health(current_health: str, elapsed: float, distance: float, config: ImuOnlyConfig) -> str:
+    if _is_lost(current_health, elapsed, distance, config):
+        return PoseHealth.LOST.value
+    if _is_degraded(current_health, elapsed, distance, config):
+        return PoseHealth.DEGRADED.value
+    return PoseHealth.OK.value
+
+
+def _latency_metric(start_time: float, count: int) -> np.ndarray:
+    total_time_ms = (time.perf_counter() - start_time) * 1000.0
+    return np.full(count, total_time_ms / count, dtype=np.float64)
+
+
 class ImuOnlyBackend(BaseOdometryBackend):
     """
     Inertial navigation baseline (open-loop gyro/accel integration with gravity removal).
@@ -43,26 +107,11 @@ class ImuOnlyBackend(BaseOdometryBackend):
         """
         Runs IMU-only propagation on the sequence.
         """
-        if sequence.imu is None or len(sequence.imu) == 0:
-            raise ValueError("IMU data is missing or empty in the sequence")
-
+        imu = _require_imu(sequence)
         cfg = config if config is not None else ImuOnlyConfig()
-
-        imu = sequence.imu
         t = imu["t"]
         N = len(t)
-
-        # Allocate arrays
-        positions = np.zeros((N, 3), dtype=np.float64)
-        orientations = np.zeros((N, 4), dtype=np.float64)
-        velocities = np.zeros((N, 3), dtype=np.float64)
-        health = np.empty(N, dtype=object)
-
-        # Initialize initial state
-        positions[0] = cfg.initial_position
-        orientations[0] = cfg.initial_orientation
-        velocities[0] = cfg.initial_velocity
-        health[0] = PoseHealth.OK.value
+        positions, orientations, velocities, health = _initial_state_arrays(N, cfg)
 
         # Track execution time for latency metric
         start_time = time.perf_counter()
@@ -71,30 +120,15 @@ class ImuOnlyBackend(BaseOdometryBackend):
         t0 = t[0]
 
         for i in range(N - 1):
-            dt = t[i + 1] - t[i]
-            if dt <= 0:
-                dt = 1e-6  # safety fallback
-
-            # Current state
-            R_curr = Rotation.from_quat(orientations[i])
+            dt = _positive_dt(t, i)
             v_curr = velocities[i]
             p_curr = positions[i]
 
-            # Integrate orientation using angular velocity in body frame
-            # We assume angular velocity is constant over dt
-            omega = np.array([imu["gx"][i], imu["gy"][i], imu["gz"][i]], dtype=np.float64)
-            rot_vec = omega * dt
-            R_inc = Rotation.from_rotvec(rot_vec)
-            R_next = R_curr * R_inc
+            R_curr = Rotation.from_quat(orientations[i])
+            R_next = _integrated_orientation(orientations[i], _angular_velocity(imu, i), dt)
             orientations[i + 1] = R_next.as_quat()
 
-            # Accelerometer reading in body frame
-            a_body = np.array([imu["ax"][i], imu["ay"][i], imu["az"][i]], dtype=np.float64)
-
-            # Transform to world frame and remove gravity
-            a_world = R_curr.apply(a_body) - cfg.gravity
-
-            # Integrate velocity and position
+            a_world = R_curr.apply(_body_acceleration(imu, i)) - cfg.gravity
             v_next = v_curr + a_world * dt
             p_next = p_curr + v_curr * dt + 0.5 * a_world * (dt**2)
 
@@ -104,27 +138,11 @@ class ImuOnlyBackend(BaseOdometryBackend):
             # Update health status
             dt_elapsed = t[i + 1] - t0
             dist = np.linalg.norm(p_next - cfg.initial_position)
-
-            if current_health == PoseHealth.LOST.value:
-                # Sticky LOST status
-                next_health = PoseHealth.LOST.value
-            elif dt_elapsed > cfg.lost_time_threshold or dist > cfg.lost_drift_threshold:
-                next_health = PoseHealth.LOST.value
-            elif current_health == PoseHealth.DEGRADED.value:
-                # Sticky DEGRADED status (unless degraded transitions to LOST)
-                next_health = PoseHealth.DEGRADED.value
-            elif dt_elapsed > cfg.degraded_time_threshold or dist > cfg.degraded_drift_threshold:
-                next_health = PoseHealth.DEGRADED.value
-            else:
-                next_health = PoseHealth.OK.value
-
+            next_health = _next_imu_health(current_health, dt_elapsed, dist, cfg)
             health[i + 1] = next_health
             current_health = next_health
 
-        # Compute latency
-        total_time_ms = (time.perf_counter() - start_time) * 1000.0
-        latency_per_sample = total_time_ms / N
-        latency_ms = np.full(N, latency_per_sample, dtype=np.float64)
+        latency_ms = _latency_metric(start_time, N)
         confidence = np.ones(N, dtype=np.float64)
 
         return Trajectory(

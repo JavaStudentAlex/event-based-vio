@@ -1,8 +1,11 @@
 import csv
 
 import numpy as np
+import pytest
 
+from nav_benchmark.datasets.mvsec import EVENT_DTYPE
 from nav_benchmark.datasets.synthetic import (
+    _event_frame_timestamps_from_events,
     load_synthetic_sequence,
     read_synthetic_ground_truth_csv,
     read_synthetic_imu_csv,
@@ -83,6 +86,50 @@ def test_read_compact_task_ground_truth_csv(tmp_path):
     np.testing.assert_allclose(trajectory.timestamps, [0.0, 0.033])
     np.testing.assert_allclose(trajectory.positions[:, 2], [100.0, 100.0])
     np.testing.assert_allclose(trajectory.confidence, [1.0, 0.98])
+
+
+def test_read_synthetic_ground_truth_health_and_empty_optional_values(tmp_path):
+    path = tmp_path / "trajectory.csv"
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["t", "x", "y", "z", "qx", "qy", "qz", "qw", "vx", "vy", "vz", "health"])
+        writer.writerow([0.0, 0.0, 0.0, 100.0, 0.0, 0.0, 0.0, 1.0, "", "", "", ""])
+        writer.writerow([1.0, 1.0, 0.0, 100.0, 0.0, 0.0, 0.0, 1.0, "2.0", "", "", "DEGRADED"])
+
+    trajectory = read_synthetic_ground_truth_csv(path)
+
+    assert trajectory.health.tolist() == ["OK", "DEGRADED"]
+    np.testing.assert_allclose(trajectory.velocities, [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+
+
+def test_read_synthetic_ground_truth_rejects_bad_required_and_health_values(tmp_path):
+    path = tmp_path / "trajectory.csv"
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["t", "x", "y", "z", "qx", "qy", "qz", "qw", "health"])
+        writer.writerow([0.0, "", 0.0, 100.0, 0.0, 0.0, 0.0, 1.0, "OK"])
+
+    with pytest.raises(ValueError, match="empty value in required column"):
+        read_synthetic_ground_truth_csv(path)
+
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["t", "x", "y", "z", "qx", "qy", "qz", "qw", "health"])
+        writer.writerow([0.0, 0.0, 0.0, 100.0, 0.0, 0.0, 0.0, 1.0, "BROKEN"])
+
+    with pytest.raises(ValueError, match="invalid health value"):
+        read_synthetic_ground_truth_csv(path)
+
+
+def test_event_frame_timestamps_interpolate_from_events():
+    events = np.empty(3, dtype=EVENT_DTYPE)
+    events["t"] = [2.0, 3.0, 6.0]
+
+    timestamps = _event_frame_timestamps_from_events(3, events)
+
+    np.testing.assert_allclose(timestamps, [2.0, 4.0, 6.0])
+    assert _event_frame_timestamps_from_events(1, events) is None
+    assert _event_frame_timestamps_from_events(3, None) is None
 
 
 def test_read_synthetic_imu_csv(tmp_path):

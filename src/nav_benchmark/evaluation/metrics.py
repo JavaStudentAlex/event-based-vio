@@ -1,5 +1,6 @@
 import csv
 import json
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -151,7 +152,131 @@ class EvaluationResult:
     aligned_ground_truth: Trajectory | None = None
 
 
-def read_project_csv(path: str | Path) -> Trajectory:  # noqa: C901
+_REQUIRED_TRAJECTORY_COLUMNS = {"timestamp", "method", "x", "y", "z", "qx", "qy", "qz", "qw"}
+
+
+def _read_csv_header(reader: Iterator[list[str]], path: Path) -> list[str]:
+    try:
+        return next(reader)
+    except StopIteration as err:
+        raise EvaluationError(f"CSV file is empty: {path}") from err
+
+
+def _csv_column_indices(header: list[str]) -> dict[str, int]:
+    header_set = set(header)
+    if not _REQUIRED_TRAJECTORY_COLUMNS.issubset(header_set):
+        missing = _REQUIRED_TRAJECTORY_COLUMNS - header_set
+        raise EvaluationError(f"Missing required columns in CSV: {missing}")
+    return {col: header.index(col) for col in header}
+
+
+def _required_float(row: list[str], indices: dict[str, int], column: str, row_number: int) -> float:
+    try:
+        return float(row[indices[column]])
+    except ValueError as err:
+        raise EvaluationError(f"Non-numeric value in row {row_number}: {err}") from err
+
+
+def _parse_required_csv_pose(
+    row: list[str], indices: dict[str, int], row_number: int
+) -> tuple[float, str, list[float], list[float]]:
+    values = {
+        column: _required_float(row, indices, column, row_number)
+        for column in ("timestamp", "x", "y", "z", "qx", "qy", "qz", "qw")
+    }
+    if not all(np.isfinite(value) for value in values.values()):
+        raise EvaluationError(f"Non-finite value in row {row_number}")
+
+    position = [values["x"], values["y"], values["z"]]
+    orientation = [values["qx"], values["qy"], values["qz"], values["qw"]]
+    return values["timestamp"], row[indices["method"]], position, orientation
+
+
+def _optional_float(row: list[str], indices: dict[str, int], column: str, default: float) -> float:
+    if column not in indices:
+        return default
+    value = row[indices[column]]
+    if value == "":
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+def _zero_velocity() -> list[float]:
+    return [0.0, 0.0, 0.0]
+
+
+def _has_velocity_columns(indices: dict[str, int]) -> bool:
+    return all(column in indices for column in ("vx", "vy", "vz"))
+
+
+def _float_vector_or_default(values: list[str], default: list[float]) -> list[float]:
+    if "" in values:
+        return default
+    try:
+        return [float(value) for value in values]
+    except ValueError:
+        return default
+
+
+def _optional_velocity(row: list[str], indices: dict[str, int]) -> list[float]:
+    columns = ("vx", "vy", "vz")
+    if not _has_velocity_columns(indices):
+        return _zero_velocity()
+    values = [row[indices[column]] for column in columns]
+    return _float_vector_or_default(values, _zero_velocity())
+
+
+def _optional_health(row: list[str], indices: dict[str, int]) -> str:
+    if "health" not in indices:
+        return PoseHealth.OK.value
+    return row[indices["health"]] or PoseHealth.OK.value
+
+
+def _normalize_csv_orientations(orientations: np.ndarray) -> np.ndarray:
+    norms = np.linalg.norm(orientations, axis=1)
+    if np.any(norms == 0.0):
+        raise EvaluationError("Zero/degenerate orientation quaternion found")
+    return orientations / norms[:, np.newaxis]
+
+
+def _validate_csv_timestamps(timestamps: np.ndarray) -> None:
+    if len(timestamps) > 1 and np.any(np.diff(timestamps) < 0):
+        raise EvaluationError("Timestamps are not strictly monotonic")
+
+
+def _validate_csv_health(health: np.ndarray) -> None:
+    valid_states = {state.value for state in PoseHealth}
+    for idx, value in enumerate(health):
+        if value not in valid_states:
+            raise EvaluationError(f"Invalid health value at index {idx}: {value}. Must be one of {valid_states}")
+
+
+def _append_csv_trajectory_row(
+    row: list[str],
+    row_number: int,
+    indices: dict[str, int],
+    columns: dict[str, list],
+) -> None:
+    if not row:
+        return
+    if len(row) < len(indices):
+        raise EvaluationError(f"Row {row_number} is malformed or truncated")
+
+    ts, method_str, position, orientation = _parse_required_csv_pose(row, indices, row_number)
+    columns["timestamps"].append(ts)
+    columns["method"].append(method_str)
+    columns["positions"].append(position)
+    columns["orientations"].append(orientation)
+    columns["velocities"].append(_optional_velocity(row, indices))
+    columns["confidence"].append(_optional_float(row, indices, "confidence", 1.0))
+    columns["health"].append(_optional_health(row, indices))
+    columns["latency_ms"].append(_optional_float(row, indices, "latency_ms", 0.0))
+
+
+def read_project_csv(path: str | Path) -> Trajectory:
     """
     Reads a trajectory CSV file following the project schema:
     timestamp,method,x,y,z,qx,qy,qz,qw,vx,vy,vz,confidence,health,latency_ms
@@ -161,156 +286,42 @@ def read_project_csv(path: str | Path) -> Trajectory:  # noqa: C901
     if not path.exists():
         raise FileNotFoundError(f"Trajectory file not found: {path}")
 
-    timestamps = []
-    positions = []
-    orientations = []
-    velocities = []
-    confidence = []
-    health = []
-    latency_ms = []
-    method = None
+    columns: dict[str, list] = {
+        "timestamps": [],
+        "method": [],
+        "positions": [],
+        "orientations": [],
+        "velocities": [],
+        "confidence": [],
+        "health": [],
+        "latency_ms": [],
+    }
 
     with open(path, newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
-        try:
-            header = next(reader)
-        except StopIteration as err:
-            raise EvaluationError(f"CSV file is empty: {path}") from err
-
-        # Basic verification of required columns
-        required = {"timestamp", "method", "x", "y", "z", "qx", "qy", "qz", "qw"}
-        header_set = set(header)
-        if not required.issubset(header_set):
-            raise EvaluationError(f"Missing required columns in CSV: {required - header_set}")
-
-        indices = {col: header.index(col) for col in header}
+        indices = _csv_column_indices(_read_csv_header(reader, path))
 
         for idx, row in enumerate(reader):
-            if not row:
-                continue
-            if len(row) < len(header):
-                raise EvaluationError(f"Row {idx + 2} is malformed or truncated")
+            _append_csv_trajectory_row(row, idx + 2, indices, columns)
 
-            # Extract fields
-            ts_str = row[indices["timestamp"]]
-            method_str = row[indices["method"]]
-            x_str = row[indices["x"]]
-            y_str = row[indices["y"]]
-            z_str = row[indices["z"]]
-            qx_str = row[indices["qx"]]
-            qy_str = row[indices["qy"]]
-            qz_str = row[indices["qz"]]
-            qw_str = row[indices["qw"]]
-
-            try:
-                ts = float(ts_str)
-                x = float(x_str)
-                y = float(y_str)
-                z = float(z_str)
-                qx = float(qx_str)
-                qy = float(qy_str)
-                qz = float(qz_str)
-                qw = float(qw_str)
-            except ValueError as e:
-                raise EvaluationError(f"Non-numeric value in row {idx + 2}: {e}") from e
-
-            if not (
-                np.isfinite(ts)
-                and np.isfinite(x)
-                and np.isfinite(y)
-                and np.isfinite(z)
-                and np.isfinite(qx)
-                and np.isfinite(qy)
-                and np.isfinite(qz)
-                and np.isfinite(qw)
-            ):
-                raise EvaluationError(f"Non-finite value in row {idx + 2}")
-
-            timestamps.append(ts)
-            if method is None:
-                method = method_str
-
-            positions.append([x, y, z])
-            orientations.append([qx, qy, qz, qw])
-
-            # Optional velocities
-            if "vx" in indices and "vy" in indices and "vz" in indices:
-                vx_s, vy_s, vz_s = row[indices["vx"]], row[indices["vy"]], row[indices["vz"]]
-                if vx_s != "" and vy_s != "" and vz_s != "":
-                    try:
-                        velocities.append([float(vx_s), float(vy_s), float(vz_s)])
-                    except ValueError:
-                        velocities.append([0.0, 0.0, 0.0])
-                else:
-                    velocities.append([0.0, 0.0, 0.0])
-            else:
-                velocities.append([0.0, 0.0, 0.0])
-
-            # Optional confidence
-            if "confidence" in indices:
-                conf_s = row[indices["confidence"]]
-                if conf_s != "":
-                    try:
-                        confidence.append(float(conf_s))
-                    except ValueError:
-                        confidence.append(1.0)
-                else:
-                    confidence.append(1.0)
-            else:
-                confidence.append(1.0)
-
-            # Optional health
-            if "health" in indices:
-                h_val = row[indices["health"]]
-                if h_val == "":
-                    h_val = "OK"
-                health.append(h_val)
-            else:
-                health.append("OK")
-
-            # Optional latency_ms
-            if "latency_ms" in indices:
-                lat_s = row[indices["latency_ms"]]
-                if lat_s != "":
-                    try:
-                        latency_ms.append(float(lat_s))
-                    except ValueError:
-                        latency_ms.append(0.0)
-                else:
-                    latency_ms.append(0.0)
-            else:
-                latency_ms.append(0.0)
-
-    if not timestamps:
+    if not columns["timestamps"]:
         raise EvaluationError("No trajectory rows found in CSV")
 
-    ts_arr = np.array(timestamps, dtype=np.float64)
-    pos_arr = np.array(positions, dtype=np.float64)
-    orient_arr = np.array(orientations, dtype=np.float64)
-    vel_arr = np.array(velocities, dtype=np.float64)
-    conf_arr = np.array(confidence, dtype=np.float64)
-    health_arr = np.array(health, dtype=object)
-    lat_arr = np.array(latency_ms, dtype=np.float64)
+    ts_arr = np.array(columns["timestamps"], dtype=np.float64)
+    pos_arr = np.array(columns["positions"], dtype=np.float64)
+    orient_arr = np.array(columns["orientations"], dtype=np.float64)
+    vel_arr = np.array(columns["velocities"], dtype=np.float64)
+    conf_arr = np.array(columns["confidence"], dtype=np.float64)
+    health_arr = np.array(columns["health"], dtype=object)
+    lat_arr = np.array(columns["latency_ms"], dtype=np.float64)
 
-    # Quaternion validation
-    norms = np.linalg.norm(orient_arr, axis=1)
-    if np.any(norms == 0.0):
-        raise EvaluationError("Zero/degenerate orientation quaternion found")
-    orient_arr = orient_arr / norms[:, np.newaxis]
-
-    # Monotonicity check
-    if len(ts_arr) > 1 and np.any(np.diff(ts_arr) < 0):
-        raise EvaluationError("Timestamps are not strictly monotonic")
-
-    # Health label checks
-    valid_states = {h.value for h in PoseHealth}
-    for idx, h_val in enumerate(health_arr):
-        if h_val not in valid_states:
-            raise EvaluationError(f"Invalid health value at index {idx}: {h_val}. Must be one of {valid_states}")
+    orient_arr = _normalize_csv_orientations(orient_arr)
+    _validate_csv_timestamps(ts_arr)
+    _validate_csv_health(health_arr)
 
     return Trajectory(
         timestamps=ts_arr,
-        method=method or "unknown",
+        method=columns["method"][0] if columns["method"] else "unknown",
         positions=pos_arr,
         orientations=orient_arr,
         velocities=vel_arr,
@@ -391,39 +402,68 @@ def _compute_failure_metrics(health_labels: np.ndarray, durations: np.ndarray) -
     )
 
 
-def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: EvalConfig) -> EvaluationResult:  # noqa: C901
-    """
-    Evaluates an estimated trajectory against a ground-truth reference trajectory.
-    """
-    # 1. Validation and input verification
-    if len(estimate.timestamps) == 0:
-        raise EvaluationError("Estimate trajectory is empty")
-    if len(reference.timestamps) == 0:
-        raise EvaluationError("Reference trajectory is empty")
+@dataclass
+class _EvaluationPreparation:
+    durations: np.ndarray
+    health_labels: np.ndarray
+    coverage: CoverageMetrics
+    runtime: RuntimeMetrics
+    failures: FailureMetrics
+    eligible_mask: np.ndarray
 
-    if len(estimate.timestamps) > 1 and np.any(np.diff(estimate.timestamps) < 0):
-        raise EvaluationError("Estimate timestamps are not monotonic")
-    if len(reference.timestamps) > 1 and np.any(np.diff(reference.timestamps) < 0):
-        raise EvaluationError("Reference timestamps are not monotonic")
 
-    if not np.all(np.isfinite(estimate.positions)) or not np.all(np.isfinite(estimate.orientations)):
-        raise EvaluationError("Estimate positions/orientations contain non-finite values")
-    if not np.all(np.isfinite(reference.positions)) or not np.all(np.isfinite(reference.orientations)):
-        raise EvaluationError("Reference positions/orientations contain non-finite values")
+@dataclass
+class _MatchedTrajectoryData:
+    matched_est_filt_idx: np.ndarray
+    matched_est_orig_idx: np.ndarray
+    matched_ref_idx: np.ndarray
+    sync_diag: Any
+    ref_positions: np.ndarray
+    ref_orientations_xyzw: np.ndarray
+    ref_orientations_wxyz: np.ndarray
+    ref_timestamps: np.ndarray
+    est_timestamps: np.ndarray
 
-    # 2. Coverage Metrics (computed on original estimate trajectory)
-    timestamps = estimate.timestamps
+
+@dataclass
+class _AlignmentData:
+    positions: np.ndarray
+    orientations_xyzw: np.ndarray
+    result: AlignmentResult
+
+
+def _require_nonempty_trajectory(name: str, trajectory: Trajectory) -> None:
+    if len(trajectory.timestamps) == 0:
+        raise EvaluationError(f"{name} trajectory is empty")
+
+
+def _require_monotonic_trajectory_timestamps(name: str, timestamps: np.ndarray) -> None:
+    if len(timestamps) > 1 and np.any(np.diff(timestamps) < 0):
+        raise EvaluationError(f"{name} timestamps are not monotonic")
+
+
+def _require_finite_trajectory_pose_arrays(name: str, trajectory: Trajectory) -> None:
+    positions_are_finite = np.all(np.isfinite(trajectory.positions))
+    orientations_are_finite = np.all(np.isfinite(trajectory.orientations))
+    if not positions_are_finite or not orientations_are_finite:
+        raise EvaluationError(f"{name} positions/orientations contain non-finite values")
+
+
+def _validate_evaluation_trajectory(name: str, trajectory: Trajectory) -> None:
+    _require_nonempty_trajectory(name, trajectory)
+    _require_monotonic_trajectory_timestamps(name, trajectory.timestamps)
+    _require_finite_trajectory_pose_arrays(name, trajectory)
+
+
+def _coverage_metrics_from_estimate(
+    timestamps: np.ndarray, health_labels: np.ndarray, durations: np.ndarray
+) -> CoverageMetrics:
     total_duration = float(timestamps[-1] - timestamps[0]) if len(timestamps) > 1 else 0.0
-
-    durations = _sample_durations(timestamps)
-    h_arr = _health_labels(estimate.health, len(timestamps))
-
-    ok_dur = float(np.sum(durations[h_arr == PoseHealth.OK.value]))
-    deg_dur = float(np.sum(durations[h_arr == PoseHealth.DEGRADED.value]))
-    lost_dur = float(np.sum(durations[h_arr == PoseHealth.LOST.value]))
-    inv_dur = float(np.sum(durations[h_arr == PoseHealth.INVALID.value]))
-
-    cov = CoverageMetrics(
+    ok_dur = float(np.sum(durations[health_labels == PoseHealth.OK.value]))
+    deg_dur = float(np.sum(durations[health_labels == PoseHealth.DEGRADED.value]))
+    lost_dur = float(np.sum(durations[health_labels == PoseHealth.LOST.value]))
+    inv_dur = float(np.sum(durations[health_labels == PoseHealth.INVALID.value]))
+    return CoverageMetrics(
         total_duration_sec=total_duration,
         ok_duration_sec=ok_dur,
         degraded_duration_sec=deg_dur,
@@ -433,19 +473,35 @@ def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: Eva
         lost_fraction=lost_dur / total_duration if total_duration > 0 else 0.0,
         invalid_fraction=inv_dur / total_duration if total_duration > 0 else 0.0,
     )
-    runtime = _compute_runtime_metrics(estimate.timestamps, estimate.latency_ms)
-    failures = _compute_failure_metrics(h_arr, durations)
 
-    # 3. Filter estimate to only OK/DEGRADED poses
-    ok_deg_mask = np.isin(h_arr, [PoseHealth.OK.value, PoseHealth.DEGRADED.value])
-    if np.sum(ok_deg_mask) < 3:
+
+def _eligible_pose_mask(health_labels: np.ndarray) -> np.ndarray:
+    mask = np.isin(health_labels, [PoseHealth.OK.value, PoseHealth.DEGRADED.value])
+    if int(np.sum(mask)) < 3:
         raise EvaluationError(
             "Insufficient OK/DEGRADED poses in estimate trajectory (minimum 3 required for SE(3) alignment)"
         )
+    return mask
 
-    est_ts_filt = estimate.timestamps[ok_deg_mask]
 
-    # 4. Synchronize filtered estimate timestamps to reference timestamps
+def _prepare_evaluation(estimate: Trajectory) -> _EvaluationPreparation:
+    timestamps = estimate.timestamps
+    durations = _sample_durations(timestamps)
+    health_labels = _health_labels(estimate.health, len(timestamps))
+    return _EvaluationPreparation(
+        durations=durations,
+        health_labels=health_labels,
+        coverage=_coverage_metrics_from_estimate(timestamps, health_labels, durations),
+        runtime=_compute_runtime_metrics(timestamps, estimate.latency_ms),
+        failures=_compute_failure_metrics(health_labels, durations),
+        eligible_mask=_eligible_pose_mask(health_labels),
+    )
+
+
+def _match_trajectories(
+    estimate: Trajectory, reference: Trajectory, config: EvalConfig, eligible_mask: np.ndarray
+) -> _MatchedTrajectoryData:
+    est_ts_filt = estimate.timestamps[eligible_mask]
     try:
         matched_est_filt_idx, matched_ref_idx, sync_diag = synchronize_nearest_neighbor(
             est_ts_filt, reference.timestamps, config.association_tolerance_sec
@@ -454,7 +510,7 @@ def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: Eva
         raise EvaluationError(f"Timestamp synchronization failed: {e}") from e
 
     # Map matched_est_filt_idx back to original estimate indices
-    ok_deg_orig_indices = np.where(ok_deg_mask)[0]
+    ok_deg_orig_indices = np.where(eligible_mask)[0]
     matched_est_orig_idx = ok_deg_orig_indices[matched_est_filt_idx]
 
     matched_count = len(matched_est_orig_idx)
@@ -463,31 +519,44 @@ def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: Eva
             "Insufficient matched poses between estimate and reference after synchronization (minimum 3 required for SE(3) alignment)"
         )
 
-    # 5. Extract matched positions/orientations and construct evo trajectory objects
     matched_ref_positions = reference.positions[matched_ref_idx]
     matched_ref_orientations_xyzw = reference.orientations[matched_ref_idx]
     matched_ref_orientations_wxyz = matched_ref_orientations_xyzw[:, [3, 0, 1, 2]]
     matched_ref_timestamps = reference.timestamps[matched_ref_idx]
 
-    matched_ref_pose_traj = PoseTrajectory3D(
-        positions_xyz=matched_ref_positions,
-        orientations_quat_wxyz=matched_ref_orientations_wxyz,
-        timestamps=matched_ref_timestamps,
+    return _MatchedTrajectoryData(
+        matched_est_filt_idx=matched_est_filt_idx,
+        matched_est_orig_idx=matched_est_orig_idx,
+        matched_ref_idx=matched_ref_idx,
+        sync_diag=sync_diag,
+        ref_positions=matched_ref_positions,
+        ref_orientations_xyzw=matched_ref_orientations_xyzw,
+        ref_orientations_wxyz=matched_ref_orientations_wxyz,
+        ref_timestamps=matched_ref_timestamps,
+        est_timestamps=estimate.timestamps[matched_est_orig_idx],
     )
 
-    matched_est_positions = estimate.positions[matched_est_orig_idx]
-    matched_est_orientations_xyzw = estimate.orientations[matched_est_orig_idx]
-    matched_est_orientations_wxyz = matched_est_orientations_xyzw[:, [3, 0, 1, 2]]
-    matched_est_timestamps = estimate.timestamps[matched_est_orig_idx]
 
-    matched_est_pose_traj = PoseTrajectory3D(
-        positions_xyz=matched_est_positions,
-        orientations_quat_wxyz=matched_est_orientations_wxyz,
-        timestamps=matched_est_timestamps,
+def _pose_trajectory_from_xyzw(positions: np.ndarray, orientations_xyzw: np.ndarray, timestamps: np.ndarray):
+    return PoseTrajectory3D(
+        positions_xyz=positions,
+        orientations_quat_wxyz=orientations_xyzw[:, [3, 0, 1, 2]],
+        timestamps=timestamps,
     )
 
-    # 6. SE(3) Trajectory Alignment
+
+def _align_estimate(estimate: Trajectory, matched: _MatchedTrajectoryData, config: EvalConfig) -> _AlignmentData:
     if config.alignment_policy == "se3":
+        matched_ref_pose_traj = PoseTrajectory3D(
+            positions_xyz=matched.ref_positions,
+            orientations_quat_wxyz=matched.ref_orientations_wxyz,
+            timestamps=matched.ref_timestamps,
+        )
+        matched_est_pose_traj = _pose_trajectory_from_xyzw(
+            estimate.positions[matched.matched_est_orig_idx],
+            estimate.orientations[matched.matched_est_orig_idx],
+            matched.est_timestamps,
+        )
         try:
             R_align, t_align, scale_align = matched_est_pose_traj.align(
                 matched_ref_pose_traj, correct_scale=config.correct_scale
@@ -495,18 +564,11 @@ def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: Eva
         except Exception as e:
             raise EvaluationError(f"Global SE(3) alignment failed: {e}") from e
 
-        # Construct transformation matrix
         T = np.identity(4)
         T[:3, :3] = scale_align * R_align
         T[:3, 3] = t_align
 
-        # Transform full estimated trajectory (positions and orientations)
-        all_est_wxyz = estimate.orientations[:, [3, 0, 1, 2]]
-        full_est_traj = PoseTrajectory3D(
-            positions_xyz=estimate.positions,
-            orientations_quat_wxyz=all_est_wxyz,
-            timestamps=estimate.timestamps,
-        )
+        full_est_traj = _pose_trajectory_from_xyzw(estimate.positions, estimate.orientations, estimate.timestamps)
         full_est_traj.transform(T)
 
         aligned_positions = full_est_traj.positions_xyz
@@ -524,30 +586,27 @@ def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: Eva
             t=[0.0, 0.0, 0.0],
             scale=1.0,
         )
+    return _AlignmentData(aligned_positions, aligned_orientations_xyzw, align_result)
 
-    # Re-extract matched estimate positions after alignment
-    matched_est_positions_aligned = aligned_positions[matched_est_orig_idx]
-    matched_est_orientations_aligned_wxyz = aligned_orientations_xyzw[matched_est_orig_idx][:, [3, 0, 1, 2]]
 
-    # 7. Compute ATE
-    ate_errors = np.linalg.norm(matched_est_positions_aligned - matched_ref_positions, axis=1)
-    ate_rmse = float(np.sqrt(np.mean(ate_errors**2)))
-    ate_mean = float(np.mean(ate_errors))
-    ate_median = float(np.median(ate_errors))
-    ate_std = float(np.std(ate_errors))
-    ate_min = float(np.min(ate_errors))
-    ate_max = float(np.max(ate_errors))
-
-    # 8. Compute RPE
+def _rpe_statistics(
+    ref_positions: np.ndarray,
+    ref_orientations_wxyz: np.ndarray,
+    ref_timestamps: np.ndarray,
+    est_positions: np.ndarray,
+    est_orientations_wxyz: np.ndarray,
+    est_timestamps: np.ndarray,
+    config: EvalConfig,
+) -> dict[str, float]:
     traj_ref_matched_eval = PoseTrajectory3D(
-        positions_xyz=matched_ref_positions,
-        orientations_quat_wxyz=matched_ref_orientations_wxyz,
-        timestamps=matched_ref_timestamps,
+        positions_xyz=ref_positions,
+        orientations_quat_wxyz=ref_orientations_wxyz,
+        timestamps=ref_timestamps,
     )
     traj_est_matched_eval_aligned = PoseTrajectory3D(
-        positions_xyz=matched_est_positions_aligned,
-        orientations_quat_wxyz=matched_est_orientations_aligned_wxyz,
-        timestamps=matched_est_timestamps,
+        positions_xyz=est_positions,
+        orientations_quat_wxyz=est_orientations_wxyz,
+        timestamps=est_timestamps,
     )
 
     rpe_metric = evo_metrics.RPE(
@@ -559,76 +618,94 @@ def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: Eva
 
     try:
         rpe_metric.process_data((traj_ref_matched_eval, traj_est_matched_eval_aligned))
-        rpe_stats = rpe_metric.get_all_statistics()
-        rpe_rmse = float(rpe_stats.get("rmse", 0.0))
-        rpe_mean = float(rpe_stats.get("mean", 0.0))
-        rpe_median = float(rpe_stats.get("median", 0.0))
-        rpe_std = float(rpe_stats.get("std", 0.0))
-        rpe_min = float(rpe_stats.get("min", 0.0))
-        rpe_max = float(rpe_stats.get("max", 0.0))
+        stats = rpe_metric.get_all_statistics()
+        return {name: float(stats.get(name, 0.0)) for name in ("rmse", "mean", "median", "std", "min", "max")}
     except Exception:
-        # Fallback to nan / 0.0 if RPE cannot be computed due to short distances
-        rpe_rmse = float("nan")
-        rpe_mean = float("nan")
-        rpe_median = float("nan")
-        rpe_std = float("nan")
-        rpe_min = float("nan")
-        rpe_max = float("nan")
+        return {name: float("nan") for name in ("rmse", "mean", "median", "std", "min", "max")}
 
-    # 9. Compute Cumulative Distance on OK/DEGRADED estimate poses
-    diffs = np.diff(estimate.positions[ok_deg_mask], axis=0)
-    dists = np.linalg.norm(diffs, axis=1)
-    cum_dists_ok_deg = np.zeros(np.sum(ok_deg_mask))
-    cum_dists_ok_deg[1:] = np.cumsum(dists)
 
-    cumulative_distance = float(cum_dists_ok_deg[-1]) if len(cum_dists_ok_deg) > 0 else 0.0
+def _metric_summary(
+    matched: _MatchedTrajectoryData, alignment: _AlignmentData, eligible_positions: np.ndarray, config: EvalConfig
+) -> tuple[MetricSummary, np.ndarray, np.ndarray]:
+    matched_est_positions_aligned = alignment.positions[matched.matched_est_orig_idx]
+    matched_est_orientations_aligned_wxyz = alignment.orientations_xyzw[matched.matched_est_orig_idx][:, [3, 0, 1, 2]]
+    ate_errors = np.linalg.norm(matched_est_positions_aligned - matched.ref_positions, axis=1)
+    ate_rmse = float(np.sqrt(np.mean(ate_errors**2)))
+    ate_mean = float(np.mean(ate_errors))
+    ate_median = float(np.median(ate_errors))
+    ate_std = float(np.std(ate_errors))
+    ate_min = float(np.min(ate_errors))
+    ate_max = float(np.max(ate_errors))
 
-    # Extract cumulative distances corresponding to matched poses
-    cum_dists_matched = cum_dists_ok_deg[matched_est_filt_idx]
-
-    # 10. Final Drift
-    final_drift = float(ate_errors[-1]) if len(ate_errors) > 0 else 0.0
-
-    metric_summary = MetricSummary(
-        ate_rmse=ate_rmse,
-        ate_mean=ate_mean,
-        ate_median=ate_median,
-        ate_std=ate_std,
-        ate_min=ate_min,
-        ate_max=ate_max,
-        rpe_rmse=rpe_rmse,
-        rpe_mean=rpe_mean,
-        rpe_median=rpe_median,
-        rpe_std=rpe_std,
-        rpe_min=rpe_min,
-        rpe_max=rpe_max,
-        final_drift=final_drift,
-        cumulative_distance=cumulative_distance,
+    rpe = _rpe_statistics(
+        matched.ref_positions,
+        matched.ref_orientations_wxyz,
+        matched.ref_timestamps,
+        matched_est_positions_aligned,
+        matched_est_orientations_aligned_wxyz,
+        matched.est_timestamps,
+        config,
     )
 
-    # 11. Compile ErrorVsTimeRow
-    error_vs_time = []
-    # Map matched_est_orig_idx to index in matched arrays
-    orig_idx_to_matched_k = {orig_idx: k for k, orig_idx in enumerate(matched_est_orig_idx)}
+    diffs = np.diff(eligible_positions, axis=0)
+    dists = np.linalg.norm(diffs, axis=1)
+    cum_dists_ok_deg = np.zeros(len(eligible_positions))
+    cum_dists_ok_deg[1:] = np.cumsum(dists)
+    cumulative_distance = float(cum_dists_ok_deg[-1]) if len(cum_dists_ok_deg) > 0 else 0.0
+    cum_dists_matched = cum_dists_ok_deg[matched.matched_est_filt_idx]
+    final_drift = float(ate_errors[-1]) if len(ate_errors) > 0 else 0.0
 
-    for i in range(len(estimate.timestamps)):
-        h_str = str(h_arr[i])
+    return (
+        MetricSummary(
+            ate_rmse=ate_rmse,
+            ate_mean=ate_mean,
+            ate_median=ate_median,
+            ate_std=ate_std,
+            ate_min=ate_min,
+            ate_max=ate_max,
+            rpe_rmse=rpe["rmse"],
+            rpe_mean=rpe["mean"],
+            rpe_median=rpe["median"],
+            rpe_std=rpe["std"],
+            rpe_min=rpe["min"],
+            rpe_max=rpe["max"],
+            final_drift=final_drift,
+            cumulative_distance=cumulative_distance,
+        ),
+        ate_errors,
+        cum_dists_matched,
+    )
+
+
+def _error_vs_time_rows(
+    estimate: Trajectory,
+    reference: Trajectory,
+    matched: _MatchedTrajectoryData,
+    alignment: _AlignmentData,
+    health_labels: np.ndarray,
+    ate_errors: np.ndarray,
+) -> list[ErrorVsTimeRow]:
+    rows = []
+    orig_idx_to_matched_k = {orig_idx: k for k, orig_idx in enumerate(matched.matched_est_orig_idx)}
+    for i, _timestamp in enumerate(estimate.timestamps):
+        h_str = str(health_labels[i])
         ts = float(estimate.timestamps[i])
-        est_xyz = aligned_positions[i].tolist()
+        est_xyz = alignment.positions[i].tolist()
 
         if i in orig_idx_to_matched_k:
             k = orig_idx_to_matched_k[i]
-            ref_xyz = reference.positions[matched_ref_idx[k]].tolist()
-            err_xyz = (aligned_positions[i] - reference.positions[matched_ref_idx[k]]).tolist()
+            ref_index = matched.matched_ref_idx[k]
+            ref_xyz = reference.positions[ref_index].tolist()
+            err_xyz = (alignment.positions[i] - reference.positions[ref_index]).tolist()
             err_mag = float(ate_errors[k])
-            res_val = float(abs(ts - reference.timestamps[matched_ref_idx[k]]))
+            res_val = float(abs(ts - reference.timestamps[ref_index]))
         else:
             ref_xyz = None
             err_xyz = None
             err_mag = None
             res_val = None
 
-        error_vs_time.append(
+        rows.append(
             ErrorVsTimeRow(
                 timestamp=ts,
                 estimated_xyz=est_xyz,
@@ -639,19 +716,28 @@ def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: Eva
                 association_residual=res_val,
             )
         )
+    return rows
 
-    # 12. Compile ErrorVsDistanceRow and DriftBinSummary
-    error_vs_distance = []
-    for k in range(matched_count):
+
+def _error_vs_distance_rows(
+    estimate: Trajectory,
+    reference: Trajectory,
+    matched: _MatchedTrajectoryData,
+    health_labels: np.ndarray,
+    ate_errors: np.ndarray,
+    cum_dists_matched: np.ndarray,
+    drift_bin_width_m: float,
+) -> list[ErrorVsDistanceRow]:
+    rows = []
+    for k, orig_i in enumerate(matched.matched_est_orig_idx):
         dist = float(cum_dists_matched[k])
         err_mag = float(ate_errors[k])
-        orig_i = matched_est_orig_idx[k]
-        h_str = str(h_arr[orig_i])
-        res_val = float(abs(estimate.timestamps[orig_i] - reference.timestamps[matched_ref_idx[k]]))
-        bin_start = float((dist // config.drift_bin_width_m) * config.drift_bin_width_m)
-        bin_end = bin_start + config.drift_bin_width_m
+        h_str = str(health_labels[orig_i])
+        res_val = float(abs(estimate.timestamps[orig_i] - reference.timestamps[matched.matched_ref_idx[k]]))
+        bin_start = float((dist // drift_bin_width_m) * drift_bin_width_m)
+        bin_end = bin_start + drift_bin_width_m
 
-        error_vs_distance.append(
+        rows.append(
             ErrorVsDistanceRow(
                 cumulative_distance=dist,
                 error_magnitude=err_mag,
@@ -661,93 +747,135 @@ def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: Eva
                 bin_end=bin_end,
             )
         )
+    return rows
 
-    # Drift Bin Summaries
+
+def _bin_error_summary(ate_errors: np.ndarray, in_bin: np.ndarray) -> tuple[int, float | None, float | None]:
+    pose_count = int(np.sum(in_bin))
+    if pose_count == 0:
+        return pose_count, None, None
+    bin_errors = ate_errors[in_bin]
+    q75, q25 = np.percentile(bin_errors, [75, 25])
+    return pose_count, float(np.median(bin_errors)), float(q75 - q25)
+
+
+def _drift_bin_summaries(
+    ate_errors: np.ndarray, cum_dists_matched: np.ndarray, drift_bin_width_m: float
+) -> list[DriftBinSummary]:
+    if len(cum_dists_matched) == 0:
+        return []
+    num_bins = max(int(np.ceil(cum_dists_matched[-1] / drift_bin_width_m)), 1)
     drift_bins = []
-    if matched_count > 0:
-        max_matched_dist = cum_dists_matched[-1]
-        num_bins = int(np.ceil(max_matched_dist / config.drift_bin_width_m))
-        if num_bins == 0:
-            num_bins = 1
-
-        for i in range(num_bins):
-            b_start = float(i * config.drift_bin_width_m)
-            b_end = b_start + config.drift_bin_width_m
-
-            if i == num_bins - 1:
-                in_bin = (cum_dists_matched >= b_start) & (cum_dists_matched <= b_end)
-            else:
-                in_bin = (cum_dists_matched >= b_start) & (cum_dists_matched < b_end)
-
-            pose_count_bin = int(np.sum(in_bin))
-            if pose_count_bin > 0:
-                bin_errors = ate_errors[in_bin]
-                median_err = float(np.median(bin_errors))
-                q75, q25 = np.percentile(bin_errors, [75, 25])
-                iqr_err = float(q75 - q25)
-            else:
-                median_err = None
-                iqr_err = None
-
-            drift_bins.append(
-                DriftBinSummary(
-                    bin_start=b_start,
-                    bin_end=b_end,
-                    median_error=median_err,
-                    iqr_error=iqr_err,
-                    pose_count=pose_count_bin,
-                )
+    for i in range(num_bins):
+        b_start = float(i * drift_bin_width_m)
+        b_end = b_start + drift_bin_width_m
+        upper_mask = cum_dists_matched <= b_end if i == num_bins - 1 else cum_dists_matched < b_end
+        in_bin = (cum_dists_matched >= b_start) & upper_mask
+        pose_count, median_err, iqr_err = _bin_error_summary(ate_errors, in_bin)
+        drift_bins.append(
+            DriftBinSummary(
+                bin_start=b_start,
+                bin_end=b_end,
+                median_error=median_err,
+                iqr_error=iqr_err,
+                pose_count=pose_count,
             )
+        )
+    return drift_bins
 
-    eval_diag = EvaluationDiagnostics(
+
+def _optional_sync_timestamp(value: Any) -> float | None:
+    return float(value) if value is not None else None
+
+
+def _evaluation_diagnostics(sync_diag: Any) -> EvaluationDiagnostics:
+    return EvaluationDiagnostics(
         source_count=int(sync_diag.source_count),
         target_count=int(sync_diag.target_count),
         matched_count=int(sync_diag.matched_count),
         unmatched_source_count=int(sync_diag.unmatched_source_count),
         unmatched_target_count=int(sync_diag.unmatched_target_count),
         tolerance_sec=float(sync_diag.tolerance_sec),
-        first_matched_timestamp=float(sync_diag.first_matched_timestamp)
-        if sync_diag.first_matched_timestamp is not None
-        else None,
-        last_matched_timestamp=float(sync_diag.last_matched_timestamp)
-        if sync_diag.last_matched_timestamp is not None
-        else None,
+        first_matched_timestamp=_optional_sync_timestamp(sync_diag.first_matched_timestamp),
+        last_matched_timestamp=_optional_sync_timestamp(sync_diag.last_matched_timestamp),
         overlap_sufficiency=float(sync_diag.overlap_sufficiency),
     )
 
+
+def _aligned_trajectories(
+    estimate: Trajectory, reference: Trajectory, matched: _MatchedTrajectoryData, alignment: _AlignmentData
+) -> tuple[Trajectory, Trajectory]:
     aligned_est_trajectory = Trajectory(
         timestamps=estimate.timestamps,
         method=estimate.method,
-        positions=aligned_positions,
-        orientations=aligned_orientations_xyzw,
+        positions=alignment.positions,
+        orientations=alignment.orientations_xyzw,
         velocities=estimate.velocities,
         confidence=estimate.confidence,
         health=estimate.health,
         latency_ms=estimate.latency_ms,
     )
 
+    matched_count = len(matched.matched_est_orig_idx)
     aligned_gt_trajectory = Trajectory(
-        timestamps=matched_ref_timestamps,
+        timestamps=matched.ref_timestamps,
         method="ground_truth",
-        positions=matched_ref_positions,
-        orientations=matched_ref_orientations_xyzw,
-        velocities=reference.velocities[matched_ref_idx] if reference.velocities is not None else None,
-        confidence=reference.confidence[matched_ref_idx] if reference.confidence is not None else None,
+        positions=matched.ref_positions,
+        orientations=matched.ref_orientations_xyzw,
+        velocities=reference.velocities[matched.matched_ref_idx] if reference.velocities is not None else None,
+        confidence=reference.confidence[matched.matched_ref_idx] if reference.confidence is not None else None,
         health=np.array([PoseHealth.OK] * matched_count, dtype=object),
-        latency_ms=reference.latency_ms[matched_ref_idx] if reference.latency_ms is not None else None,
+        latency_ms=reference.latency_ms[matched.matched_ref_idx] if reference.latency_ms is not None else None,
     )
+    return aligned_est_trajectory, aligned_gt_trajectory
+
+
+def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: EvalConfig) -> EvaluationResult:
+    """
+    Evaluates an estimated trajectory against a ground-truth reference trajectory.
+    """
+    _validate_evaluation_trajectory("Estimate", estimate)
+    _validate_evaluation_trajectory("Reference", reference)
+
+    prepared = _prepare_evaluation(estimate)
+    matched = _match_trajectories(estimate, reference, config, prepared.eligible_mask)
+    alignment = _align_estimate(estimate, matched, config)
+    metric_summary, ate_errors, cum_dists_matched = _metric_summary(
+        matched,
+        alignment,
+        estimate.positions[prepared.eligible_mask],
+        config,
+    )
+    error_vs_time = _error_vs_time_rows(
+        estimate,
+        reference,
+        matched,
+        alignment,
+        prepared.health_labels,
+        ate_errors,
+    )
+    error_vs_distance = _error_vs_distance_rows(
+        estimate,
+        reference,
+        matched,
+        prepared.health_labels,
+        ate_errors,
+        cum_dists_matched,
+        config.drift_bin_width_m,
+    )
+    aligned_est_trajectory, aligned_gt_trajectory = _aligned_trajectories(estimate, reference, matched, alignment)
 
     return EvaluationResult(
         status="OK",
         error_message=None,
         config=config,
-        diagnostics=eval_diag,
-        coverage=cov,
-        runtime=runtime,
-        failures=failures,
-        alignment=align_result,
+        diagnostics=_evaluation_diagnostics(matched.sync_diag),
+        coverage=prepared.coverage,
+        runtime=prepared.runtime,
+        failures=prepared.failures,
+        alignment=alignment.result,
         metrics=metric_summary,
-        drift_bins=drift_bins,
+        drift_bins=_drift_bin_summaries(ate_errors, cum_dists_matched, config.drift_bin_width_m),
         error_vs_time=error_vs_time,
         error_vs_distance=error_vs_distance,
         aligned_estimate=aligned_est_trajectory,
@@ -755,25 +883,36 @@ def evaluate_trajectory(estimate: Trajectory, reference: Trajectory, config: Eva
     )
 
 
+def _json_number(val: float | np.floating | np.integer) -> float | int | None:
+    if not np.isfinite(val):
+        return None
+    if isinstance(val, np.floating):
+        return float(val)
+    return int(val) if isinstance(val, np.integer) else val
+
+
+def _json_dict(val: dict) -> dict:
+    return {key: make_json_serializable(value) for key, value in val.items()}
+
+
+def _json_list(val: list) -> list:
+    return [make_json_serializable(value) for value in val]
+
+
 def make_json_serializable(val: Any) -> Any:
     """Helper to convert objects/numpy types to standard JSON-compatible formats."""
-    if isinstance(val, dict):
-        return {k: make_json_serializable(v) for k, v in val.items()}
-    elif isinstance(val, list):
-        return [make_json_serializable(v) for v in val]
-    elif isinstance(val, float):
-        if not np.isfinite(val):
-            return None
-        return val
-    elif isinstance(val, (np.floating, np.integer)):
-        if not np.isfinite(val):
-            return None
-        return float(val) if isinstance(val, np.floating) else int(val)
-    elif isinstance(val, np.ndarray):
-        return make_json_serializable(val.tolist())
-    elif isinstance(val, Path):
-        return str(val)
-    elif hasattr(val, "__dataclass_fields__"):
+    converters = (
+        (dict, _json_dict),
+        (list, _json_list),
+        (np.ndarray, lambda array: make_json_serializable(array.tolist())),  # type: ignore[attr-defined]
+        (Path, str),
+    )
+    for expected_type, converter in converters:
+        if isinstance(val, expected_type):
+            return converter(val)  # type: ignore[arg-type]
+    if isinstance(val, (float, np.floating, np.integer)):
+        return _json_number(val)
+    if hasattr(val, "__dataclass_fields__"):
         return make_json_serializable(asdict(val))
     return val
 
@@ -791,47 +930,61 @@ def export_error_vs_time_csv(result: EvaluationResult, path: str | Path) -> None
     path = Path(path)
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(
-            [
-                "timestamp",
-                "est_x",
-                "est_y",
-                "est_z",
-                "gt_aligned_x",
-                "gt_aligned_y",
-                "gt_aligned_z",
-                "error_x",
-                "error_y",
-                "error_z",
-                "error_magnitude",
-                "health",
-                "association_residual",
-            ]
-        )
+        writer.writerow(_error_vs_time_header())
         for row in result.error_vs_time:
-            # Handle optionals
-            gt_x, gt_y, gt_z = row.aligned_ground_truth_xyz if row.aligned_ground_truth_xyz else ("", "", "")
-            err_x, err_y, err_z = row.xyz_error if row.xyz_error else ("", "", "")
-            err_mag = f"{row.error_magnitude:.9f}" if row.error_magnitude is not None else ""
-            res_val = f"{row.association_residual:.9f}" if row.association_residual is not None else ""
+            writer.writerow(_error_vs_time_csv_row(row))
 
-            writer.writerow(
-                [
-                    f"{row.timestamp:.9f}",
-                    f"{row.estimated_xyz[0]:.9f}",
-                    f"{row.estimated_xyz[1]:.9f}",
-                    f"{row.estimated_xyz[2]:.9f}",
-                    f"{gt_x:.9f}" if isinstance(gt_x, float) else gt_x,
-                    f"{gt_y:.9f}" if isinstance(gt_y, float) else gt_y,
-                    f"{gt_z:.9f}" if isinstance(gt_z, float) else gt_z,
-                    f"{err_x:.9f}" if isinstance(err_x, float) else err_x,
-                    f"{err_y:.9f}" if isinstance(err_y, float) else err_y,
-                    f"{err_z:.9f}" if isinstance(err_z, float) else err_z,
-                    err_mag,
-                    row.health,
-                    res_val,
-                ]
-            )
+
+def _error_vs_time_header() -> list[str]:
+    return [
+        "timestamp",
+        "est_x",
+        "est_y",
+        "est_z",
+        "gt_aligned_x",
+        "gt_aligned_y",
+        "gt_aligned_z",
+        "error_x",
+        "error_y",
+        "error_z",
+        "error_magnitude",
+        "health",
+        "association_residual",
+    ]
+
+
+def _optional_xyz(values: list[float] | None) -> tuple[float | str, float | str, float | str]:
+    if values and len(values) >= 3:
+        return (values[0], values[1], values[2])
+    return ("", "", "")
+
+
+def _format_optional_float(value: float | None) -> str:
+    return f"{value:.9f}" if value is not None else ""
+
+
+def _format_csv_number(value: float | str) -> str:
+    return f"{value:.9f}" if isinstance(value, float) else value
+
+
+def _format_xyz(values: tuple[float | str, float | str, float | str]) -> list[str]:
+    return [_format_csv_number(value) for value in values]
+
+
+def _error_vs_time_csv_row(row: ErrorVsTimeRow) -> list[str]:
+    gt_xyz = _optional_xyz(row.aligned_ground_truth_xyz)
+    err_xyz = _optional_xyz(row.xyz_error)
+    return [
+        f"{row.timestamp:.9f}",
+        f"{row.estimated_xyz[0]:.9f}",
+        f"{row.estimated_xyz[1]:.9f}",
+        f"{row.estimated_xyz[2]:.9f}",
+        *_format_xyz(gt_xyz),
+        *_format_xyz(err_xyz),
+        _format_optional_float(row.error_magnitude),
+        row.health,
+        _format_optional_float(row.association_residual),
+    ]
 
 
 def export_error_vs_distance_csv(result: EvaluationResult, path: str | Path) -> None:

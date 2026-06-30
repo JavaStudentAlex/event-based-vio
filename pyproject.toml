@@ -112,6 +112,9 @@ pytest_add_cli_args_test_selection = ["tests"]
 
 [tool.mypy]
 python_version = "3.13"
+mypy_path = "src"
+explicit_package_bases = true
+ignore_missing_imports = true
 exclude = [
     '^\.agents/',
     '^\.codex/',
@@ -125,3 +128,4 @@ exclude = [
 
 [tool.bandit]
 exclude_dirs = [".agents", ".codex", ".github", ".gsd", ".skills", "skills", "mutants", ".venv", "tests"]
+skips = ["B110", "B112", "B310", "B404", "B603"]

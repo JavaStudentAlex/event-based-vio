@@ -9,6 +9,8 @@ from nav_benchmark.evaluation.metrics import (
 from nav_benchmark.evaluation.plots import (
     PlottingError,
     write_drift_over_distance_plot,
+    write_ensemble_weight_plot,
+    write_trajectory_comparison_plot,
     write_trajectory_plot,
 )
 from nav_benchmark.trajectory.models import Trajectory
@@ -141,6 +143,80 @@ def test_write_drift_over_distance_plot_success(tmp_path):
     assert "Sequence: test_seq" in svg_content
     assert "Cumulative Distance [m]" in svg_content
     assert "Position Error (ATE) [m]" in svg_content
+
+
+def test_write_trajectory_comparison_plot_success(tmp_path):
+    timestamps = np.array([0.0, 1.0, 2.0])
+    orientations = np.array([[0.0, 0.0, 0.0, 1.0]] * 3)
+    ground_truth = Trajectory(
+        timestamps=timestamps,
+        method="ground_truth",
+        positions=np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 1.0, 0.0]]),
+        orientations=orientations,
+    )
+    estimate = Trajectory(
+        timestamps=timestamps,
+        method="imu_only",
+        positions=np.array([[0.0, 0.1, 0.0], [1.0, 0.2, 0.0], [2.0, 1.2, 0.0]]),
+        orientations=orientations,
+    )
+
+    output_base = tmp_path / "comparison"
+    write_trajectory_comparison_plot(
+        {
+            "imu_only": estimate,
+            "empty": Trajectory(
+                timestamps=np.array([]), method="empty", positions=np.empty((0, 3)), orientations=np.empty((0, 4))
+            ),
+        },
+        ground_truth,
+        output_base,
+        sequence="test_seq",
+        title="Comparison Title",
+    )
+
+    assert output_base.with_suffix(".png").stat().st_size > 0
+    svg_content = output_base.with_suffix(".svg").read_text(encoding="utf-8")
+    assert "Ground Truth" in svg_content
+    assert "imu_only" in svg_content
+    assert "Comparison Title" in svg_content
+    assert "Sequence: test_seq" in svg_content
+
+
+def test_write_ensemble_weight_plot_success_and_missing_weights(tmp_path):
+    timestamps = np.array([0.0, 1.0, 2.0])
+    orientations = np.array([[0.0, 0.0, 0.0, 1.0]] * 3)
+    ensemble = Trajectory(
+        timestamps=timestamps,
+        method="ensemble",
+        positions=np.zeros((3, 3)),
+        orientations=orientations,
+        extra_columns={
+            "w_imu": np.array([1.0, 0.8, 0.6]),
+            "w_rgb": np.array([0.0, 0.1, 0.2]),
+            "w_event": np.array([0.0, 0.1, 0.1]),
+            "w_event_imu": np.array([0.0, 0.0, 0.1]),
+        },
+    )
+
+    output_base = tmp_path / "weights"
+    write_ensemble_weight_plot(ensemble, output_base, sequence="test_seq", title="Weights Title")
+
+    assert output_base.with_suffix(".png").stat().st_size > 0
+    svg_content = output_base.with_suffix(".svg").read_text(encoding="utf-8")
+    assert "w_imu" in svg_content
+    assert "w_rgb" in svg_content
+    assert "Weights Title" in svg_content
+    assert "Sequence: test_seq" in svg_content
+
+    missing = Trajectory(
+        timestamps=timestamps,
+        method="ensemble",
+        positions=np.zeros((3, 3)),
+        orientations=orientations,
+    )
+    with pytest.raises(PlottingError, match="no weight columns"):
+        write_ensemble_weight_plot(missing, tmp_path / "missing_weights")
 
 
 def test_plotting_negative_cases():

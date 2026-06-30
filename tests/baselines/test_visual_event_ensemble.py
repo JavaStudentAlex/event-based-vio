@@ -3,10 +3,12 @@ import csv
 import numpy as np
 
 from nav_benchmark.baselines.event_imu import EventImuBackend, EventImuConfig
+from nav_benchmark.baselines.image_imu import ImageImuBackend, ImageImuConfig
 from nav_benchmark.baselines.imu import ImuOnlyBackend, ImuOnlyConfig
+from nav_benchmark.baselines.multimodal_vio import MultimodalVioBackend, MultimodalVioConfig
 from nav_benchmark.baselines.visual import EventVoBackend, FeatureVoConfig, RgbVoBackend
 from nav_benchmark.datasets.synthetic import load_synthetic_sequence
-from nav_benchmark.ensemble.confidence_weighted import fuse_trajectories
+from nav_benchmark.ensemble.confidence_weighted import fuse_trajectories, write_weight_log_csv
 from nav_benchmark.evaluation.metrics import read_project_csv
 from nav_benchmark.synthetic.imageio import save_png_rgb
 from nav_benchmark.trajectory.export import export_project_csv
@@ -90,7 +92,12 @@ def test_visual_event_event_imu_and_ensemble_outputs(tmp_path):
     _write_visual_sequence(tmp_path)
     sequence = load_synthetic_sequence(tmp_path, sequence_name="visual_unit")
 
-    visual_config = FeatureVoConfig(min_matches=4, min_inliers=2, full_confidence_matches=20)
+    visual_config = FeatureVoConfig(
+        min_matches=4,
+        min_inliers=2,
+        full_confidence_matches=20,
+        debug_match_dir=tmp_path / "debug_matches",
+    )
     imu_config = ImuOnlyConfig(gravity=np.array([0.0, 0.0, -9.81]))
 
     imu = ImuOnlyBackend().run(sequence, config=imu_config)
@@ -100,13 +107,35 @@ def test_visual_event_event_imu_and_ensemble_outputs(tmp_path):
         sequence,
         config=EventImuConfig(imu_config=imu_config, event_vo_config=visual_config),
     )
+    default_event_imu = EventImuBackend().run(sequence, config=EventImuConfig(event_vo_config=visual_config))
+    image_imu = ImageImuBackend().run(
+        sequence,
+        config=ImageImuConfig(imu_config=imu_config, rgb_vo_config=visual_config),
+    )
+    multimodal = MultimodalVioBackend().run(
+        sequence,
+        config=MultimodalVioConfig(
+            imu_config=imu_config,
+            rgb_vo_config=visual_config,
+            event_vo_config=visual_config,
+        ),
+    )
 
     assert rgb.method == "rgb_vo"
     assert event.method == "event_vo"
     assert event_imu.method == "event_imu"
+    assert default_event_imu.method == "event_imu"
+    assert image_imu.method == "image_imu"
+    assert multimodal.method == "multimodal_vio"
     assert np.all(np.isfinite(rgb.positions))
     assert np.all((rgb.confidence >= 0.0) & (rgb.confidence <= 1.0))
+    assert any((tmp_path / "debug_matches").glob("*.png"))
     assert len(event_imu.timestamps) == len(sequence.imu)
+    assert len(default_event_imu.timestamps) == len(sequence.imu)
+    assert len(image_imu.timestamps) == len(sequence.imu)
+    assert len(multimodal.timestamps) == len(sequence.imu)
+    assert np.all(np.isfinite(multimodal.positions))
+    assert np.all((multimodal.confidence >= 0.0) & (multimodal.confidence <= 1.0))
 
     ensemble = fuse_trajectories(
         {
@@ -114,12 +143,20 @@ def test_visual_event_event_imu_and_ensemble_outputs(tmp_path):
             "rgb_vo": rgb,
             "event_vo": event,
             "event_imu": event_imu,
+            "image_imu": image_imu,
+            "multimodal_vio": multimodal,
         }
     )
 
     assert ensemble.method == "ensemble"
     assert set(ensemble.extra_columns) == {"w_imu", "w_rgb", "w_event", "w_event_imu", "w_image_imu", "w_multimodal"}
-    weights = np.stack([ensemble.extra_columns[name] for name in ("w_imu", "w_rgb", "w_event", "w_event_imu", "w_image_imu", "w_multimodal")], axis=1)
+    weights = np.stack(
+        [
+            ensemble.extra_columns[name]
+            for name in ("w_imu", "w_rgb", "w_event", "w_event_imu", "w_image_imu", "w_multimodal")
+        ],
+        axis=1,
+    )
     np.testing.assert_allclose(np.sum(weights, axis=1), np.ones(len(ensemble.timestamps)))
 
     export_path = tmp_path / "ensemble.csv"
@@ -131,3 +168,10 @@ def test_visual_event_event_imu_and_ensemble_outputs(tmp_path):
     read_back = read_project_csv(export_path)
     assert read_back.method == "ensemble"
     assert len(read_back.timestamps) == len(ensemble.timestamps)
+
+    weight_path = tmp_path / "ensemble_weights.csv"
+    write_weight_log_csv(ensemble, weight_path)
+    with open(weight_path, newline="", encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+    assert rows[0] == ["timestamp", "w_imu", "w_rgb", "w_event", "w_event_imu", "w_image_imu", "w_multimodal"]
+    assert len(rows) == len(ensemble.timestamps) + 1

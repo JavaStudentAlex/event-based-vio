@@ -4,6 +4,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Any, NoReturn
 
 import numpy as np
 
@@ -39,13 +40,19 @@ from nav_benchmark.validation import validate_run_directory
 
 
 def get_code_version() -> str:
+    return _installed_code_version() or _pyproject_code_version() or "0.1.0"
+
+
+def _installed_code_version() -> str | None:
     try:
         import importlib.metadata
 
         return importlib.metadata.version("event-based-vio")
     except Exception:
-        pass
+        return None
 
+
+def _pyproject_code_version() -> str | None:
     try:
         pyproject_path = Path(__file__).parent.parent.parent / "pyproject.toml"
         if pyproject_path.exists():
@@ -54,17 +61,11 @@ def get_code_version() -> str:
                     if line.strip().startswith("version ="):
                         return line.split("=")[1].strip().strip('"').strip("'")
     except Exception:
-        pass
+        return None
+    return None
 
-    return "0.1.0"
 
-
-def generate_failure_notes(trajectory: Trajectory, metadata: ExportMetadata) -> str:
-    ok_count = metadata.health_counts.get("OK", 0)
-    degraded_count = metadata.health_counts.get("DEGRADED", 0)
-    lost_count = metadata.health_counts.get("LOST", 0)
-    invalid_count = metadata.health_counts.get("INVALID", 0)
-
+def _health_intervals(trajectory: Trajectory) -> list[tuple[str, float, float]]:
     intervals = []
     if trajectory.health is not None and len(trajectory.health) > 0:
         current_state = str(trajectory.health[0])
@@ -78,26 +79,37 @@ def generate_failure_notes(trajectory: Trajectory, metadata: ExportMetadata) -> 
                 current_state = h
                 start_time = float(trajectory.timestamps[i])
         intervals.append((current_state, start_time, float(trajectory.timestamps[-1])))
+    return intervals
 
+
+def _intervals_text(intervals: list[tuple[str, float, float]]) -> str:
     degraded_lost_intervals = [item for item in intervals if item[0] in ("DEGRADED", "LOST")]
-
     if not degraded_lost_intervals:
-        intervals_text = "No degraded or lost intervals were detected during this run."
-    else:
-        lines = []
-        for state, t_start, t_end in degraded_lost_intervals:
-            duration = t_end - t_start
-            lines.append(f"- **{state}**: {t_start:.4f}s to {t_end:.4f}s (duration: {duration:.4f}s)")
-        intervals_text = "\n".join(lines)
+        return "No degraded or lost intervals were detected during this run."
+    lines = []
+    for state, t_start, t_end in degraded_lost_intervals:
+        duration = t_end - t_start
+        lines.append(f"- **{state}**: {t_start:.4f}s to {t_end:.4f}s (duration: {duration:.4f}s)")
+    return "\n".join(lines)
 
-    if trajectory.method == "imu_only":
-        guidance_text = (
+
+def _failure_guidance_text(method: str) -> str:
+    if method == "imu_only":
+        return (
             "IMU-only propagation accumulates integration drift rapidly without correction. "
             "It is highly recommended to fuse visual or event streams (e.g. image_imu, event_imu) "
             "to bound errors and prevent tracking loss."
         )
-    else:
-        guidance_text = "Monitor tracking health and investigate calibration or sync anomalies."
+    return "Monitor tracking health and investigate calibration or sync anomalies."
+
+
+def generate_failure_notes(trajectory: Trajectory, metadata: ExportMetadata) -> str:
+    ok_count = metadata.health_counts.get("OK", 0)
+    degraded_count = metadata.health_counts.get("DEGRADED", 0)
+    lost_count = metadata.health_counts.get("LOST", 0)
+    invalid_count = metadata.health_counts.get("INVALID", 0)
+    intervals_text = _intervals_text(_health_intervals(trajectory))
+    guidance_text = _failure_guidance_text(trajectory.method)
 
     return f"""# Run Failure Notes
 
@@ -199,82 +211,94 @@ def _event_vo_config(run_dir: Path | None) -> FeatureVoConfig:
     return FeatureVoConfig(scale_bias=0.98, debug_match_dir=_debug_dir(run_dir, "event_vo_matches"))
 
 
+def _run_backend(backend, sequence: MvsecSequence, config):
+    result = backend.run_result(sequence, config=config)
+    return result.trajectory, config
+
+
+def _run_imu_only(args, sequence: MvsecSequence, run_dir: Path | None):
+    return _run_backend(ImuOnlyBackend(), sequence, _imu_only_config_for_sequence(args, sequence))
+
+
+def _run_rgb_vo(args, sequence: MvsecSequence, run_dir: Path | None):
+    return _run_backend(RgbVoBackend(), sequence, _rgb_vo_config(run_dir))
+
+
+def _run_event_vo(args, sequence: MvsecSequence, run_dir: Path | None):
+    return _run_backend(EventVoBackend(), sequence, _event_vo_config(run_dir))
+
+
+def _run_event_imu(args, sequence: MvsecSequence, run_dir: Path | None):
+    config = EventImuConfig(
+        imu_config=_imu_only_config_for_sequence(args, sequence),
+        event_vo_config=_event_vo_config(run_dir),
+    )
+    return _run_backend(EventImuBackend(), sequence, config)
+
+
+def _run_image_imu(args, sequence: MvsecSequence, run_dir: Path | None):
+    config = ImageImuConfig(
+        imu_config=_imu_only_config_for_sequence(args, sequence),
+        rgb_vo_config=_rgb_vo_config(run_dir),
+    )
+    return _run_backend(ImageImuBackend(), sequence, config)
+
+
+def _run_multimodal_vio(args, sequence: MvsecSequence, run_dir: Path | None):
+    config = MultimodalVioConfig(
+        imu_config=_imu_only_config_for_sequence(args, sequence),
+        rgb_vo_config=_rgb_vo_config(run_dir),
+        event_vo_config=_event_vo_config(run_dir),
+    )
+    return _run_backend(MultimodalVioBackend(), sequence, config)
+
+
+def _run_ensemble(args, sequence: MvsecSequence, run_dir: Path | None):
+    baseline_trajectories = {}
+    imu_config = _imu_only_config_for_sequence(args, sequence)
+    baseline_trajectories["imu_only"] = ImuOnlyBackend().run(sequence, config=imu_config)
+    baseline_trajectories["rgb_vo"] = RgbVoBackend().run(sequence, config=_rgb_vo_config(run_dir))
+    baseline_trajectories["event_vo"] = EventVoBackend().run(sequence, config=_event_vo_config(run_dir))
+
+    event_imu_config = EventImuConfig(imu_config=imu_config, event_vo_config=_event_vo_config(run_dir))
+    image_imu_config = ImageImuConfig(imu_config=imu_config, rgb_vo_config=_rgb_vo_config(run_dir))
+    multimodal_vio_config = MultimodalVioConfig(
+        imu_config=imu_config,
+        rgb_vo_config=_rgb_vo_config(run_dir),
+        event_vo_config=_event_vo_config(run_dir),
+    )
+    baseline_trajectories["event_imu"] = EventImuBackend().run(sequence, config=event_imu_config)
+    baseline_trajectories["image_imu"] = ImageImuBackend().run(sequence, config=image_imu_config)
+    baseline_trajectories["multimodal_vio"] = MultimodalVioBackend().run(sequence, config=multimodal_vio_config)
+
+    config = EnsembleConfig()
+    trajectory = fuse_trajectories(baseline_trajectories, config=config)
+    return trajectory, {
+        "ensemble": config,
+        "input_methods": sorted(baseline_trajectories),
+        "imu_config": imu_config,
+        "event_imu_config": event_imu_config,
+        "image_imu_config": image_imu_config,
+        "multimodal_vio_config": multimodal_vio_config,
+    }
+
+
+_ESTIMATOR_RUNNERS = {
+    "imu_only": _run_imu_only,
+    "rgb_vo": _run_rgb_vo,
+    "event_vo": _run_event_vo,
+    "event_imu": _run_event_imu,
+    "image_imu": _run_image_imu,
+    "multimodal_vio": _run_multimodal_vio,
+    "ensemble": _run_ensemble,
+}
+
+
 def run_estimator(args, sequence, run_dir: Path | None = None):
-    if args.method == "imu_only":
-        config = _imu_only_config_for_sequence(args, sequence)
-        backend = ImuOnlyBackend()
-        result = backend.run_result(sequence, config=config)
-        return result.trajectory, config
-    if args.method == "rgb_vo":
-        config = _rgb_vo_config(run_dir)
-        backend = RgbVoBackend()
-        result = backend.run_result(sequence, config=config)
-        return result.trajectory, config
-    if args.method == "event_vo":
-        config = _event_vo_config(run_dir)
-        backend = EventVoBackend()
-        result = backend.run_result(sequence, config=config)
-        return result.trajectory, config
-    if args.method == "event_imu":
-        config = EventImuConfig(
-            imu_config=_imu_only_config_for_sequence(args, sequence),
-            event_vo_config=_event_vo_config(run_dir),
-        )
-        backend = EventImuBackend()
-        result = backend.run_result(sequence, config=config)
-        return result.trajectory, config
-    if args.method == "image_imu":
-        config = ImageImuConfig(
-            imu_config=_imu_only_config_for_sequence(args, sequence),
-            rgb_vo_config=_rgb_vo_config(run_dir),
-        )
-        backend = ImageImuBackend()
-        result = backend.run_result(sequence, config=config)
-        return result.trajectory, config
-    if args.method == "multimodal_vio":
-        config = MultimodalVioConfig(
-            imu_config=_imu_only_config_for_sequence(args, sequence),
-            rgb_vo_config=_rgb_vo_config(run_dir),
-            event_vo_config=_event_vo_config(run_dir),
-        )
-        backend = MultimodalVioBackend()
-        result = backend.run_result(sequence, config=config)
-        return result.trajectory, config
-    if args.method == "ensemble":
-        baseline_trajectories = {}
-
-        imu_config = _imu_only_config_for_sequence(args, sequence)
-        baseline_trajectories["imu_only"] = ImuOnlyBackend().run(sequence, config=imu_config)
-        baseline_trajectories["rgb_vo"] = RgbVoBackend().run(sequence, config=_rgb_vo_config(run_dir))
-        baseline_trajectories["event_vo"] = EventVoBackend().run(sequence, config=_event_vo_config(run_dir))
-        event_imu_config = EventImuConfig(
-            imu_config=imu_config,
-            event_vo_config=_event_vo_config(run_dir),
-        )
-        baseline_trajectories["event_imu"] = EventImuBackend().run(sequence, config=event_imu_config)
-        image_imu_config = ImageImuConfig(
-            imu_config=imu_config,
-            rgb_vo_config=_rgb_vo_config(run_dir),
-        )
-        baseline_trajectories["image_imu"] = ImageImuBackend().run(sequence, config=image_imu_config)
-        multimodal_vio_config = MultimodalVioConfig(
-            imu_config=imu_config,
-            rgb_vo_config=_rgb_vo_config(run_dir),
-            event_vo_config=_event_vo_config(run_dir),
-        )
-        baseline_trajectories["multimodal_vio"] = MultimodalVioBackend().run(sequence, config=multimodal_vio_config)
-
-        config = EnsembleConfig()
-        trajectory = fuse_trajectories(baseline_trajectories, config=config)
-        return trajectory, {
-            "ensemble": config,
-            "input_methods": sorted(baseline_trajectories),
-            "imu_config": imu_config,
-            "event_imu_config": event_imu_config,
-            "image_imu_config": image_imu_config,
-            "multimodal_vio_config": multimodal_vio_config,
-        }
-    raise NotImplementedError(f"Method {args.method} is not implemented")
+    runner = _ESTIMATOR_RUNNERS.get(args.method)
+    if runner is None:
+        raise NotImplementedError(f"Method {args.method} is not implemented")
+    return runner(args, sequence, run_dir)
 
 
 def write_run_manifest(args, config, metadata, run_dir) -> dict:
@@ -314,52 +338,50 @@ def write_run_manifest(args, config, metadata, run_dir) -> dict:
     return run_manifest
 
 
-def discover_latest_run_dir(  # noqa: C901
-    output_root: Path, method: str | None = None, sequence: str | None = None
-) -> Path | None:
+def _load_run_manifest(run_dir: Path) -> dict[str, Any] | None:
+    manifest_path = run_dir / "run_manifest.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        with open(manifest_path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _method_filter_matches(manifest: dict[str, Any], method: str | None) -> bool:
+    return method is None or manifest.get("method") == method
+
+
+def _sequence_filter_matches(manifest: dict[str, Any], sequence: str | None) -> bool:
+    return sequence is None or manifest.get("sequence") == sequence
+
+
+def _manifest_matches_filters(
+    manifest: dict[str, Any] | None, method: str | None = None, sequence: str | None = None
+) -> bool:
+    if method is None and sequence is None:
+        return True
+    if manifest is None:
+        return False
+    return _method_filter_matches(manifest, method) and _sequence_filter_matches(manifest, sequence)
+
+
+def _is_run_dir_candidate(path: Path, method: str | None = None, sequence: str | None = None) -> bool:
+    if not path.is_dir():
+        return False
+    if not (path / "estimated_trajectory.csv").exists():
+        return False
+    return _manifest_matches_filters(_load_run_manifest(path), method=method, sequence=sequence)
+
+
+def discover_latest_run_dir(output_root: Path, method: str | None = None, sequence: str | None = None) -> Path | None:
     if not output_root.exists():
         return None
-    candidates = []
-    for path in output_root.iterdir():
-        if not path.is_dir():
-            continue
 
-        # Check method filter
-        if method:
-            manifest_path = path / "run_manifest.json"
-            if not manifest_path.exists():
-                continue
-            try:
-                with open(manifest_path) as f:
-                    manifest = json.load(f)
-                if manifest.get("method") != method:
-                    continue
-            except Exception:
-                continue
-
-        # Check sequence filter
-        if sequence:
-            manifest_path = path / "run_manifest.json"
-            if not manifest_path.exists():
-                continue
-            try:
-                with open(manifest_path) as f:
-                    manifest = json.load(f)
-                if manifest.get("sequence") != sequence:
-                    continue
-            except Exception:
-                continue
-
-        # Ensure it contains estimated_trajectory.csv
-        if not (path / "estimated_trajectory.csv").exists():
-            continue
-
-        candidates.append(path)
-
+    candidates = [path for path in output_root.iterdir() if _is_run_dir_candidate(path, method, sequence)]
     if not candidates:
         return None
-
-    # Sort by modification time of estimated_trajectory.csv
     candidates.sort(key=lambda p: (p / "estimated_trajectory.csv").stat().st_mtime, reverse=True)
     return candidates[0]
 
@@ -369,7 +391,7 @@ def load_ground_truth(path: Path) -> Trajectory:
 
 
 def write_failed_evaluation_artifacts(run_dir: Path, reason: str, config: EvalConfig) -> None:
-    failed_result = {
+    failed_result: dict[str, Any] = {
         "status": "failed",
         "reason": reason,
         "error_message": reason,
@@ -446,7 +468,7 @@ def write_failed_evaluation_artifacts(run_dir: Path, reason: str, config: EvalCo
         )
 
 
-def main() -> None:  # noqa: C901
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Visual-Inertial Navigation Benchmark Runner")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -566,241 +588,262 @@ def main() -> None:  # noqa: C901
         default="runs",
         help="Root directory where run folders are stored (used with --latest)",
     )
+    return parser
 
-    args = parser.parse_args()
 
-    if args.command == "run":
-        if args.dataset == "mvsec" and not args.input:
-            parser.error("--input is required when --dataset is 'mvsec'")
+def _next_resume_dir(run_dir: Path, dir_name: str) -> Path:
+    n = 1
+    while True:
+        candidate = run_dir.with_name(f"{dir_name}-r{n}")
+        if not candidate.exists():
+            return candidate
+        n += 1
 
-        # Create output-root if it doesn't exist
-        output_root = Path(args.output_root)
-        output_root.mkdir(parents=True, exist_ok=True)
 
-        # Generate run directory name
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        dir_name = f"{timestamp}_{args.method}_{args.sequence}"
-        run_dir = output_root / dir_name
+def _create_run_dir(args) -> Path:
+    output_root = Path(args.output_root)
+    output_root.mkdir(parents=True, exist_ok=True)
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    dir_name = f"{timestamp}_{args.method}_{args.sequence}"
+    run_dir = output_root / dir_name
+    if run_dir.exists() and args.resume:
+        run_dir = _next_resume_dir(run_dir, dir_name)
+    elif run_dir.exists():
+        print(f"Error: Run directory already exists: {run_dir}", file=sys.stderr)
+        sys.exit(1)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
 
-        if run_dir.exists():
-            if args.resume:
-                n = 1
-                while True:
-                    candidate = run_dir.with_name(f"{dir_name}-r{n}")
-                    if not candidate.exists():
-                        run_dir = candidate
-                        break
-                    n += 1
-            else:
-                print(f"Error: Run directory already exists: {run_dir}", file=sys.stderr)
-                sys.exit(1)
 
-        run_dir.mkdir(parents=True, exist_ok=True)
-        log_path = run_dir / "run.log"
+def _run_logger(log_path: Path):
+    def log_message(msg: str) -> None:
+        formatted_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{formatted_time}] {msg}")
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{formatted_time}] {msg}\n")
 
-        def log_message(msg: str) -> None:
-            formatted_time = time.strftime("%Y-%m-%d %H:%M:%S")
-            print(f"[{formatted_time}] {msg}")
-            with open(log_path, "a") as f:
-                f.write(f"[{formatted_time}] {msg}\n")
+    return log_message
 
-        log_message(f"[START] Method: {args.method}, Dataset: {args.dataset}, Sequence: {args.sequence}")
 
-        try:
-            # 1. Load sequence
-            sequence = load_dataset_sequence(args, log_message)
+def _export_ensemble_artifacts(args, trajectory: Trajectory, run_dir: Path, log_message) -> None:
+    if trajectory.method != "ensemble":
+        return
+    weight_path = run_dir / "ensemble_weights.csv"
+    write_weight_log_csv(trajectory, weight_path)
+    log_message(f"Exported ensemble weights to {weight_path}")
+    try:
+        write_ensemble_weight_plot(trajectory, run_dir / "ensemble_weights", sequence=args.sequence)
+        log_message(f"Exported ensemble weight plot to {run_dir / 'ensemble_weights.png'}")
+    except Exception as plot_err:
+        log_message(f"WARNING: failed to write ensemble weight plot: {plot_err}")
 
-            # 2. Run backend estimation
-            log_message("Running baseline estimator...")
-            trajectory, config = run_estimator(args, sequence, run_dir=run_dir)
 
-            # 3. Export trajectory artifacts
-            log_message("Exporting trajectory artifacts...")
-            csv_path = run_dir / "estimated_trajectory.csv"
-            tum_path = run_dir / "estimated_trajectory_tum.txt"
+def _export_run_artifacts(args, trajectory: Trajectory, config, run_dir: Path, log_message) -> None:
+    csv_path = run_dir / "estimated_trajectory.csv"
+    tum_path = run_dir / "estimated_trajectory_tum.txt"
+    source_frame = "camera" if args.method in {"rgb_vo", "event_vo"} else "imu"
+    metadata = ExportMetadata(source_frame=source_frame, target_frame="world")
 
-            source_frame = "camera" if args.method in {"rgb_vo", "event_vo"} else "imu"
-            metadata = ExportMetadata(source_frame=source_frame, target_frame="world")
+    export_project_csv(trajectory, csv_path, metadata)
+    export_tum(trajectory, tum_path, metadata)
+    _export_ensemble_artifacts(args, trajectory, run_dir, log_message)
+    log_message(f"Exported project CSV to {csv_path}")
+    log_message(f"Exported TUM format to {tum_path}")
 
-            export_project_csv(trajectory, csv_path, metadata)
-            export_tum(trajectory, tum_path, metadata)
-            if trajectory.method == "ensemble":
-                weight_path = run_dir / "ensemble_weights.csv"
-                write_weight_log_csv(trajectory, weight_path)
-                log_message(f"Exported ensemble weights to {weight_path}")
-                try:
-                    write_ensemble_weight_plot(
-                        trajectory,
-                        run_dir / "ensemble_weights",
-                        sequence=args.sequence,
-                    )
-                    log_message(f"Exported ensemble weight plot to {run_dir / 'ensemble_weights.png'}")
-                except Exception as plot_err:
-                    log_message(f"WARNING: failed to write ensemble weight plot: {plot_err}")
+    manifest_path = run_dir / "run_manifest.json"
+    failure_notes_path = run_dir / "failure_notes.md"
+    write_run_manifest(args, config, metadata, run_dir)
+    failure_notes_path.write_text(generate_failure_notes(trajectory, metadata), encoding="utf-8")
+    log_message(f"Exported run manifest to {manifest_path}")
+    log_message(f"Exported failure notes to {failure_notes_path}")
 
-            log_message(f"Exported project CSV to {csv_path}")
-            log_message(f"Exported TUM format to {tum_path}")
 
-            # 4. Generate manifest and failure notes
-            log_message("Generating manifest and failure notes...")
-            manifest_path = run_dir / "run_manifest.json"
-            failure_notes_path = run_dir / "failure_notes.md"
+def _handle_run_command(args, parser: argparse.ArgumentParser) -> None:
+    if args.dataset == "mvsec" and not args.input:
+        parser.error("--input is required when --dataset is 'mvsec'")
 
-            write_run_manifest(args, config, metadata, run_dir)
+    run_dir = _create_run_dir(args)
+    log_message = _run_logger(run_dir / "run.log")
+    log_message(f"[START] Method: {args.method}, Dataset: {args.dataset}, Sequence: {args.sequence}")
+    try:
+        sequence = load_dataset_sequence(args, log_message)
+        log_message("Running baseline estimator...")
+        trajectory, config = run_estimator(args, sequence, run_dir=run_dir)
+        log_message("Exporting trajectory artifacts...")
+        _export_run_artifacts(args, trajectory, config, run_dir, log_message)
+        log_message("[FINISHED] Run completed successfully.")
+    except Exception as e:
+        log_message(f"[FAILED] Run failed with error: {e}")
+        raise
 
-            notes_content = generate_failure_notes(trajectory, metadata)
-            failure_notes_path.write_text(notes_content, encoding="utf-8")
 
-            log_message(f"Exported run manifest to {manifest_path}")
-            log_message(f"Exported failure notes to {failure_notes_path}")
-            log_message("[FINISHED] Run completed successfully.")
+def _eval_config_from_args(args) -> EvalConfig:
+    return EvalConfig(
+        association_tolerance_sec=args.association_tolerance_sec,
+        alignment_policy=args.alignment_policy,
+        rpe_delta_m=args.rpe_delta_m,
+        drift_bin_width_m=args.drift_bin_width_m,
+    )
 
-        except Exception as e:
-            log_message(f"[FAILED] Run failed with error: {e}")
-            raise
 
-    elif args.command == "eval":
-        # Determine run directory
-        run_dir_path = None
-        if args.latest:
-            run_dir_path = discover_latest_run_dir(Path(args.output_root), method=args.method, sequence=args.sequence)
-            if not run_dir_path:
-                print("Error: No run directory found for evaluation.", file=sys.stderr)
-                sys.exit(1)
-        else:
-            if not args.run_dir:
-                parser.error("Either --run-dir or --latest must be specified.")
-            run_dir_path = Path(args.run_dir)
+def _latest_command_run_dir(args, command_name: str) -> Path:
+    run_dir = discover_latest_run_dir(Path(args.output_root), method=args.method, sequence=args.sequence)
+    if run_dir is None:
+        print(f"Error: No run directory found for {command_name}.", file=sys.stderr)
+        sys.exit(1)
+    return run_dir
 
-        if not run_dir_path.exists():
-            print(f"Error: Run directory does not exist: {run_dir_path}", file=sys.stderr)
-            sys.exit(1)
 
-        # Setup EvalConfig
-        eval_cfg = EvalConfig(
-            association_tolerance_sec=args.association_tolerance_sec,
-            alignment_policy=args.alignment_policy,
-            rpe_delta_m=args.rpe_delta_m,
-            drift_bin_width_m=args.drift_bin_width_m,
+def _required_command_run_dir_arg(args, parser: argparse.ArgumentParser) -> Path:
+    if not args.run_dir:
+        parser.error("Either --run-dir or --latest must be specified.")
+    run_dir = Path(args.run_dir)
+    return run_dir
+
+
+def _existing_command_run_dir(run_dir: Path) -> Path:
+    if not run_dir.exists():
+        print(f"Error: Run directory does not exist: {run_dir}", file=sys.stderr)
+        sys.exit(1)
+    return run_dir
+
+
+def _resolve_command_run_dir(args, parser: argparse.ArgumentParser, command_name: str) -> Path:
+    if args.latest:
+        return _latest_command_run_dir(args, command_name)
+    return _existing_command_run_dir(_required_command_run_dir_arg(args, parser))
+
+
+def _update_eval_failure_manifest(run_dir: Path, reason: str) -> None:
+    manifest_path = run_dir / "run_manifest.json"
+    if not manifest_path.exists():
+        return
+    try:
+        with open(manifest_path, encoding="utf-8") as f:
+            manifest = json.load(f)
+        manifest["evaluation"] = {
+            "status": "failed",
+            "error_message": reason,
+            "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=4)
+    except Exception:
+        pass
+
+
+def _fail_eval(run_dir: Path, reason: str, eval_cfg: EvalConfig) -> NoReturn:
+    print(f"Evaluation failed: {reason}", file=sys.stderr)
+    try:
+        write_failed_evaluation_artifacts(run_dir, reason, eval_cfg)
+        _update_eval_failure_manifest(run_dir, reason)
+    except Exception as write_err:
+        print(f"Failed to write failure diagnostics: {write_err}", file=sys.stderr)
+    sys.exit(1)
+
+
+def _resolve_eval_ground_truth_path(args, run_dir: Path, eval_cfg: EvalConfig) -> Path:
+    try:
+        return resolve_ground_truth_path(run_dir, args.ground_truth)
+    except Exception as e:
+        _fail_eval(run_dir, str(e), eval_cfg)
+
+
+def _load_eval_ground_truth(args, run_dir: Path, eval_cfg: EvalConfig) -> tuple[Path, Trajectory]:
+    gt_path = _resolve_eval_ground_truth_path(args, run_dir, eval_cfg)
+    try:
+        return gt_path, load_ground_truth(gt_path)
+    except Exception as e:
+        _fail_eval(run_dir, f"Failed to load ground truth trajectory: {e}", eval_cfg)
+
+
+def _evaluate_or_fail(args, run_dir: Path, gt_path: Path, ground_truth: Trajectory, eval_cfg: EvalConfig):
+    try:
+        harness_result = evaluate_run_directory(
+            run_dir,
+            ground_truth_path=gt_path,
+            eval_config=eval_cfg,
+            sequence=args.sequence or ground_truth.method,
+            write_artifacts=False,
         )
+        return harness_result.result
+    except Exception as e:
+        _fail_eval(run_dir, f"Trajectory evaluation failed: {e}", eval_cfg)
 
-        # Helper to fail evaluation with writing failed artifacts
-        def fail_eval(reason_str: str) -> None:
-            print(f"Evaluation failed: {reason_str}", file=sys.stderr)
-            try:
-                write_failed_evaluation_artifacts(run_dir_path, reason_str, eval_cfg)
-                # Update manifest with failure
-                manifest_path = run_dir_path / "run_manifest.json"
-                if manifest_path.exists():
-                    try:
-                        with open(manifest_path, encoding="utf-8") as f:
-                            manifest = json.load(f)
-                        manifest["evaluation"] = {
-                            "status": "failed",
-                            "error_message": reason_str,
-                            "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                        }
-                        with open(manifest_path, "w", encoding="utf-8") as f:
-                            json.dump(manifest, f, indent=4)
-                    except Exception:
-                        pass
-            except Exception as write_err:
-                print(f"Failed to write failure diagnostics: {write_err}", file=sys.stderr)
-            sys.exit(1)
 
-        # 1. Read estimated trajectory first to verify the run directory contains it
-        est_traj_path = run_dir_path / "estimated_trajectory.csv"
-        if not est_traj_path.exists():
-            fail_eval(f"Estimated trajectory not found: {est_traj_path}")
+def _update_eval_success_manifest(run_dir: Path, result) -> None:
+    manifest_path = run_dir / "run_manifest.json"
+    if not manifest_path.exists():
+        return
+    try:
+        with open(manifest_path, encoding="utf-8") as f:
+            manifest = json.load(f)
+        manifest["evaluation"] = {
+            "status": "success",
+            "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "metrics": make_json_serializable(result.metrics),
+            "runtime": make_json_serializable(result.runtime),
+            "failures": make_json_serializable(result.failures),
+        }
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=4)
+    except Exception as manifest_err:
+        print(f"Warning: Failed to update run_manifest.json: {manifest_err}", file=sys.stderr)
 
-        # 2. Resolve and load ground truth up front for clear diagnostics.
-        try:
-            gt_path = resolve_ground_truth_path(run_dir_path, args.ground_truth)
-        except Exception as e:
-            fail_eval(str(e))
 
-        try:
-            ground_truth = load_ground_truth(gt_path)
-        except Exception as e:
-            fail_eval(f"Failed to load ground truth trajectory: {e}")
+def _write_eval_artifacts_or_fail(args, run_dir: Path, ground_truth: Trajectory, result, eval_cfg: EvalConfig) -> None:
+    try:
+        write_evaluation_artifacts(
+            result,
+            run_dir,
+            sequence=args.sequence or ground_truth.method,
+            warn=lambda message: print(f"Warning: {message}", file=sys.stderr),
+        )
+        _update_eval_success_manifest(run_dir, result)
+    except Exception as e:
+        _fail_eval(run_dir, f"Failed to write evaluation artifacts: {e}", eval_cfg)
 
-        # 3. Evaluate trajectory without writing artifacts, then write through the shared harness.
-        try:
-            harness_result = evaluate_run_directory(
-                run_dir_path,
-                ground_truth_path=gt_path,
-                eval_config=eval_cfg,
-                sequence=args.sequence or ground_truth.method,
-                write_artifacts=False,
-            )
-            result = harness_result.result
-        except Exception as e:
-            fail_eval(f"Trajectory evaluation failed: {e}")
 
-        try:
-            write_evaluation_artifacts(
-                result,
-                run_dir_path,
-                sequence=args.sequence or ground_truth.method,
-                warn=lambda message: print(f"Warning: {message}", file=sys.stderr),
-            )
+def _handle_eval_command(args, parser: argparse.ArgumentParser) -> None:
+    run_dir = _resolve_command_run_dir(args, parser, "evaluation")
+    eval_cfg = _eval_config_from_args(args)
+    est_traj_path = run_dir / "estimated_trajectory.csv"
+    if not est_traj_path.exists():
+        _fail_eval(run_dir, f"Estimated trajectory not found: {est_traj_path}", eval_cfg)
+    gt_path, ground_truth = _load_eval_ground_truth(args, run_dir, eval_cfg)
+    result = _evaluate_or_fail(args, run_dir, gt_path, ground_truth, eval_cfg)
+    _write_eval_artifacts_or_fail(args, run_dir, ground_truth, result, eval_cfg)
+    print(f"Evaluation completed successfully. Artifacts written to {run_dir}")
 
-            # Update run_manifest.json with success block
-            manifest_path = run_dir_path / "run_manifest.json"
-            if manifest_path.exists():
-                try:
-                    with open(manifest_path, encoding="utf-8") as f:
-                        manifest = json.load(f)
 
-                    # Convert metrics and other fields to serializable form
-                    ser_metrics = make_json_serializable(result.metrics)
-                    manifest["evaluation"] = {
-                        "status": "success",
-                        "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                        "metrics": ser_metrics,
-                        "runtime": make_json_serializable(result.runtime),
-                        "failures": make_json_serializable(result.failures),
-                    }
-                    with open(manifest_path, "w", encoding="utf-8") as f:
-                        json.dump(manifest, f, indent=4)
-                except Exception as manifest_err:
-                    print(f"Warning: Failed to update run_manifest.json: {manifest_err}", file=sys.stderr)
+def _print_validation_results(results) -> int:
+    passed_count = 0
+    for result in results:
+        prefix = "[PASS]" if result.passed else "[FAIL]"
+        print(f"{prefix} {result.check_name}: {result.message}")
+        if result.passed:
+            passed_count += 1
+    print(f"Validation: {passed_count}/{len(results)} checks passed.")
+    return passed_count
 
-            print(f"Evaluation completed successfully. Artifacts written to {run_dir_path}")
 
-        except Exception as e:
-            fail_eval(f"Failed to write evaluation artifacts: {e}")
+def _handle_validate_command(args, parser: argparse.ArgumentParser) -> None:
+    run_dir = _resolve_command_run_dir(args, parser, "validation")
+    results, all_passed = validate_run_directory(run_dir, expect_eval=not args.skip_eval)
+    _print_validation_results(results)
+    if not all_passed:
+        sys.exit(1)
 
-    elif args.command == "validate":
-        if not args.run_dir and not args.latest:
-            parser.error("Either --run-dir or --latest must be specified.")
 
-        run_dir_path = None
-        if args.latest:
-            run_dir_path = discover_latest_run_dir(Path(args.output_root), method=args.method, sequence=args.sequence)
-            if not run_dir_path:
-                print("Error: No run directory found for validation.", file=sys.stderr)
-                sys.exit(1)
-        else:
-            run_dir_path = Path(args.run_dir)
-
-        if not run_dir_path.exists():
-            print(f"Error: Run directory does not exist: {run_dir_path}", file=sys.stderr)
-            sys.exit(1)
-
-        results, all_passed = validate_run_directory(run_dir_path, expect_eval=not args.skip_eval)
-
-        passed_count = 0
-        for r in results:
-            prefix = "[PASS]" if r.passed else "[FAIL]"
-            print(f"{prefix} {r.check_name}: {r.message}")
-            if r.passed:
-                passed_count += 1
-
-        print(f"Validation: {passed_count}/{len(results)} checks passed.")
-
-        if not all_passed:
-            sys.exit(1)
+def main() -> None:
+    parser = build_arg_parser()
+    args = parser.parse_args()
+    handlers = {
+        "run": _handle_run_command,
+        "eval": _handle_eval_command,
+        "validate": _handle_validate_command,
+    }
+    handlers[args.command](args, parser)
 
 
 if __name__ == "__main__":

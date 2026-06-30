@@ -5,15 +5,12 @@ import numpy as np
 
 from nav_benchmark.baselines.base import BaseOdometryBackend
 from nav_benchmark.baselines.common import (
-    health_from_confidence,
-    interpolate_trajectory,
-    latency_per_sample_ms,
-    normalize_quaternions,
+    fuse_imu_and_visual,
 )
 from nav_benchmark.baselines.imu import ImuOnlyBackend, ImuOnlyConfig
 from nav_benchmark.baselines.visual import EventVoBackend, FeatureVoConfig
 from nav_benchmark.datasets.mvsec import MvsecSequence
-from nav_benchmark.trajectory.models import PoseHealth, Trajectory
+from nav_benchmark.trajectory.models import Trajectory
 
 
 @dataclass
@@ -28,35 +25,54 @@ class EventImuConfig:
     degraded_confidence_threshold: float = 0.15
 
 
+def _sequence_gravity(sequence: MvsecSequence) -> np.ndarray:
+    if sequence.imu is not None and len(sequence.imu) > 0 and float(np.nanmedian(sequence.imu["az"])) < 0.0:
+        return np.array([0.0, 0.0, -9.81], dtype=np.float64)
+    return np.array([0.0, 0.0, 9.81], dtype=np.float64)
+
+
+def _has_ground_truth(sequence: MvsecSequence) -> bool:
+    return sequence.gt_poses is not None and len(sequence.gt_poses) > 0
+
+
+def _initial_position_from_gt(gt) -> np.ndarray:
+    return np.array([gt["x"][0], gt["y"][0], gt["z"][0]], dtype=np.float64)
+
+
+def _initial_orientation_from_gt(gt) -> np.ndarray:
+    return np.array([gt["qx"][0], gt["qy"][0], gt["qz"][0], gt["qw"][0]], dtype=np.float64)
+
+
+def _initial_velocity_from_gt(gt) -> np.ndarray | None:
+    if len(gt) < 2:
+        return None
+    dt = float(gt["t"][1] - gt["t"][0])
+    if dt <= 0.0:
+        return None
+    return (_initial_position_from_gt(gt[1:]) - _initial_position_from_gt(gt)) / dt
+
+
 def _default_imu_config_from_sequence(sequence: MvsecSequence) -> ImuOnlyConfig:
     cfg = ImuOnlyConfig()
-    if sequence.imu is not None and len(sequence.imu) > 0 and float(np.nanmedian(sequence.imu["az"])) < 0.0:
-        cfg.gravity = np.array([0.0, 0.0, -9.81], dtype=np.float64)
-    if sequence.gt_poses is None or len(sequence.gt_poses) == 0:
+    cfg.gravity = _sequence_gravity(sequence)
+    if not _has_ground_truth(sequence):
         return cfg
 
     gt = sequence.gt_poses
-    cfg.initial_position = np.array([gt["x"][0], gt["y"][0], gt["z"][0]], dtype=np.float64)
-    cfg.initial_orientation = np.array([gt["qx"][0], gt["qy"][0], gt["qz"][0], gt["qw"][0]], dtype=np.float64)
-    if len(gt) >= 2:
-        dt = float(gt["t"][1] - gt["t"][0])
-        if dt > 0.0:
-            p0 = np.array([gt["x"][0], gt["y"][0], gt["z"][0]], dtype=np.float64)
-            p1 = np.array([gt["x"][1], gt["y"][1], gt["z"][1]], dtype=np.float64)
-            cfg.initial_velocity = (p1 - p0) / dt
+    cfg.initial_position = _initial_position_from_gt(gt)
+    cfg.initial_orientation = _initial_orientation_from_gt(gt)
+    initial_velocity = _initial_velocity_from_gt(gt)
+    if initial_velocity is not None:
+        cfg.initial_velocity = initial_velocity
     return cfg
 
 
-def _weighted_quaternion_blend(a: np.ndarray, b: np.ndarray, weight_b: np.ndarray) -> np.ndarray:
-    out = np.zeros_like(a)
-    for i in range(len(a)):
-        qa = a[i]
-        qb = b[i]
-        if float(np.dot(qa, qb)) < 0.0:
-            qb = -qb
-        w = float(np.clip(weight_b[i], 0.0, 1.0))
-        out[i] = (1.0 - w) * qa + w * qb
-    return normalize_quaternions(out)
+def _event_imu_config(config: EventImuConfig | None) -> EventImuConfig:
+    return config if config is not None else EventImuConfig()
+
+
+def _imu_config_for_event_run(config: EventImuConfig, sequence: MvsecSequence) -> ImuOnlyConfig:
+    return config.imu_config if config.imu_config is not None else _default_imu_config_from_sequence(sequence)
 
 
 class EventImuBackend(BaseOdometryBackend):
@@ -66,60 +82,22 @@ class EventImuBackend(BaseOdometryBackend):
     required_streams = ("imu", "event_frames")
 
     def run(self, sequence: MvsecSequence, *, config: EventImuConfig | None = None) -> Trajectory:
-        cfg = config if config is not None else EventImuConfig()
+        cfg = _event_imu_config(config)
         start_time = time.perf_counter()
 
-        imu_config = cfg.imu_config if cfg.imu_config is not None else _default_imu_config_from_sequence(sequence)
+        imu_config = _imu_config_for_event_run(cfg, sequence)
         imu_trajectory = ImuOnlyBackend().run(sequence, config=imu_config)
         event_trajectory = EventVoBackend().run(sequence, config=cfg.event_vo_config)
 
-        event_on_imu = interpolate_trajectory(event_trajectory, imu_trajectory.timestamps)
-        event_confidence = np.where(
-            event_on_imu.confidence >= cfg.min_event_confidence_for_correction,
-            event_on_imu.confidence,
-            0.0,
-        )
-        correction_weight = np.clip(cfg.event_correction_gain * event_confidence, 0.0, cfg.event_correction_gain)
-
-        positions = (1.0 - correction_weight[:, np.newaxis]) * imu_trajectory.positions
-        positions += correction_weight[:, np.newaxis] * event_on_imu.positions
-
-        imu_velocity = imu_trajectory.velocities if imu_trajectory.velocities is not None else np.zeros_like(positions)
-        velocities = (1.0 - correction_weight[:, np.newaxis]) * imu_velocity
-        velocities += correction_weight[:, np.newaxis] * event_on_imu.velocities
-
-        orientations = _weighted_quaternion_blend(
-            imu_trajectory.orientations, event_on_imu.orientations, correction_weight
-        )
-
-        imu_confidence = (
-            imu_trajectory.confidence
-            if imu_trajectory.confidence is not None
-            else np.ones(len(imu_trajectory.timestamps))
-        )
-        confidence = np.clip(0.35 * imu_confidence + 0.65 * event_on_imu.confidence, 0.0, 1.0)
-        confidence = np.where(event_on_imu.in_range, confidence, np.minimum(confidence, 0.35))
-
-        health = health_from_confidence(
-            confidence,
-            ok_threshold=cfg.ok_confidence_threshold,
-            degraded_threshold=cfg.degraded_confidence_threshold,
-        )
-        health[confidence <= 0.0] = PoseHealth.INVALID.value
-
-        latency_ms = latency_per_sample_ms(start_time, len(imu_trajectory.timestamps))
-        if imu_trajectory.latency_ms is not None:
-            latency_ms += imu_trajectory.latency_ms
-        if event_trajectory.latency_ms is not None and len(event_trajectory.latency_ms) > 0:
-            latency_ms += float(np.nanmean(event_trajectory.latency_ms))
-
-        return Trajectory(
-            timestamps=imu_trajectory.timestamps,
+        return fuse_imu_and_visual(
+            imu_trajectory=imu_trajectory,
+            visual_trajectory=event_trajectory,
+            visual_correction_gain=cfg.event_correction_gain,
+            min_visual_confidence_for_correction=cfg.min_event_confidence_for_correction,
+            ok_confidence_threshold=cfg.ok_confidence_threshold,
+            degraded_confidence_threshold=cfg.degraded_confidence_threshold,
             method=self.method,
-            positions=positions,
-            orientations=orientations,
-            velocities=velocities,
-            confidence=confidence,
-            health=health,
-            latency_ms=latency_ms,
+            base_imu_confidence=0.35,
+            visual_confidence_weight=0.65,
+            start_time=start_time,
         )
