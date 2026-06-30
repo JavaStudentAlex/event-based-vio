@@ -39,25 +39,31 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
-    config = load_config(args.config)
-    if args.duration_s is not None:
-        config.sequence.duration_s = args.duration_s
-    if args.seed is not None:
-        config.sequence.random_seed = args.seed
-    output_dir = Path(args.output) if args.output else Path(config.sequence.output_dir)
+def _apply_duration_override(config, duration_s) -> None:
+    if duration_s is not None:
+        config.sequence.duration_s = duration_s
 
-    result = build_sequence(
-        config,
-        output_dir,
-        source=args.source,
-        archive_dir=args.archive_dir,
-        add_imu_noise=not args.no_imu_noise,
-    )
 
-    report = validate_sequence(output_dir, config=config)
-    counts = result.counts
+def _apply_seed_override(config, seed) -> None:
+    if seed is not None:
+        config.sequence.random_seed = seed
+
+
+def _apply_cli_overrides(config, args) -> None:
+    _apply_duration_override(config, args.duration_s)
+    _apply_seed_override(config, args.seed)
+
+
+def _output_dir(config, args) -> Path:
+    return Path(args.output) if args.output else Path(config.sequence.output_dir)
+
+
+def _print_validation_errors(report) -> None:
+    for err in report.errors:
+        print(f"  ERROR: {err}")
+
+
+def _print_sequence_report(output_dir: Path, counts, report) -> None:
     print()
     print(f"Sequence created: {output_dir}")
     print(f"RGB frames: {counts.rgb_frame_count}")
@@ -67,9 +73,24 @@ def main() -> int:
     print(f"IMU samples: {counts.imu_sample_count}")
     print(f"Events: {counts.event_count:,}")
     print(f"Validation: {'PASSED' if report.valid else 'FAILED'}")
-    if not report.valid:
-        for err in report.errors:
-            print(f"  ERROR: {err}")
+    _print_validation_errors(report)
+
+
+def main() -> int:
+    args = parse_args()
+    config = load_config(args.config)
+    _apply_cli_overrides(config, args)
+    output_dir = _output_dir(config, args)
+    result = build_sequence(
+        config,
+        output_dir,
+        source=args.source,
+        archive_dir=args.archive_dir,
+        add_imu_noise=not args.no_imu_noise,
+    )
+
+    report = validate_sequence(output_dir, config=config)
+    _print_sequence_report(output_dir, result.counts, report)
     return 0 if report.valid else 1
 
 

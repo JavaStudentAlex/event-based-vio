@@ -1,35 +1,46 @@
+from itertools import pairwise
+
 import cv2
 
 
+def _routes(width, height):
+    positive_route = [(width // 4, height // 4), (width // 2, height // 2), (3 * width // 4, 3 * height // 4)]
+    negative_route = [(width // 4, 3 * height // 4), (width // 2, height // 4), (3 * width // 4, height // 4)]
+    return positive_route, negative_route
+
+
+def _draw_route_points(img, route, label_prefix, color):
+    for i, point in enumerate(route, start=1):
+        cv2.circle(img, point, radius=20, color=color, thickness=-1)
+        cv2.putText(
+            img,
+            f"{label_prefix} WP{i}",
+            (point[0] + 30, point[1] - 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.5,
+            color,
+            3,
+        )
+
+
+def _draw_route_segments(img, route, color):
+    for start, end in pairwise(route):
+        cv2.line(img, start, end, color, thickness=5)
+
+
+def _draw_route(img, route, label_prefix, color):
+    _draw_route_points(img, route, label_prefix, color)
+    _draw_route_segments(img, route, color)
+
+
 def main():
-    ref_path = "data/example_reference.jpg"
     out_path = "data/reference_with_routes.jpg"
-
-    img = cv2.imread(ref_path)
+    img = cv2.imread("data/example_reference.jpg")
     h, w = img.shape[:2]
+    positive_route, negative_route = _routes(w, h)
 
-    positive_route = [(w // 4, h // 4), (w // 2, h // 2), (3 * w // 4, 3 * h // 4)]
-
-    negative_route = [(w // 4, 3 * h // 4), (w // 2, h // 4), (3 * w // 4, h // 4)]
-
-    # Draw Positive Route (Green)
-    for i in range(len(positive_route)):
-        pt1 = positive_route[i]
-        cv2.circle(img, pt1, radius=20, color=(0, 255, 0), thickness=-1)
-        cv2.putText(img, f"Pos WP{i + 1}", (pt1[0] + 30, pt1[1] - 30), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3)
-        if i > 0:
-            pt0 = positive_route[i - 1]
-            cv2.line(img, pt0, pt1, (0, 255, 0), thickness=5)
-
-    # Draw Negative Route (Red)
-    for i in range(len(negative_route)):
-        pt1 = negative_route[i]
-        cv2.circle(img, pt1, radius=20, color=(0, 0, 255), thickness=-1)
-        cv2.putText(img, f"Neg WP{i + 1}", (pt1[0] + 30, pt1[1] - 30), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3)
-        if i > 0:
-            pt0 = negative_route[i - 1]
-            cv2.line(img, pt0, pt1, (0, 0, 255), thickness=5)
-
+    _draw_route(img, positive_route, "Pos", (0, 255, 0))
+    _draw_route(img, negative_route, "Neg", (0, 0, 255))
     cv2.imwrite(out_path, img)
     print(f"Saved route map to {out_path}")
 
