@@ -1,0 +1,266 @@
+name: 2. Trigger Next Jules Task
+
+on:
+  workflow_run:
+    workflows: ["ci-slow-lane"]
+    types: [completed]
+    branches: [main]
+  push:
+    branches: [main]
+    paths:
+      - '.gsd/**/*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jules-next-task-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  next-task:
+    runs-on: ubuntu-latest
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve next GSD slice ready for implementation
+        id: gsd_slice
+        run: |
+          set -euo pipefail
+
+          python .github/scripts/resolve_gsd_slice.py
+
+      - name: Trigger Google Jules via official API
+        if: steps.gsd_slice.outputs.has_incomplete == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          JULES_API_KEY: ${{ secrets.JULES_API_KEY }}
+          REPOSITORY: ${{ github.repository }}
+          SELECTED_MILESTONE: ${{ steps.gsd_slice.outputs.milestone_id }}
+          SELECTED_SLICE: ${{ steps.gsd_slice.outputs.slice_id }}
+          SELECTED_SLICE_TITLE: ${{ steps.gsd_slice.outputs.slice_title }}
+          SELECTED_SLICE_DIR: ${{ steps.gsd_slice.outputs.slice_dir }}
+          SELECTED_ROADMAP: ${{ steps.gsd_slice.outputs.roadmap_file }}
+          SELECTION_REASON: ${{ steps.gsd_slice.outputs.selection_reason }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${JULES_API_KEY}" ]; then
+            echo "JULES_API_KEY secret is not configured. Skipping trigger."
+            exit 0
+          fi
+
+          OWNER="${REPOSITORY%%/*}"
+          REPO_NAME="${REPOSITORY#*/}"
+
+          echo "Resolving Jules source for repository ${REPOSITORY}..."
+          SOURCE_NAME="sources/github/${OWNER}/${REPO_NAME}"
+
+          if ! curl -sS -f -H "x-goog-api-key: ${JULES_API_KEY}" "https://jules.googleapis.com/v1alpha/${SOURCE_NAME}" > /dev/null; then
+            echo "No Jules source found for ${REPOSITORY}."
+            echo "Install or refresh the Jules GitHub app for this repository, then retry."
+            exit 1
+          fi
+
+          PROMPT="$(python3 - <<'PY'
+          import os
+
+          milestone = os.environ["SELECTED_MILESTONE"]
+          slice_id = os.environ["SELECTED_SLICE"]
+          slice_title = os.environ["SELECTED_SLICE_TITLE"]
+          slice_dir = os.environ["SELECTED_SLICE_DIR"]
+          roadmap = os.environ["SELECTED_ROADMAP"]
+          reason = os.environ["SELECTION_REASON"]
+          has_selected_slice = bool(milestone and slice_id)
+          template_instruction = (
+              "Use `.github/PULL_REQUEST_TEMPLATE.md` as the exact PR body template, not a freeform summary. "
+              "Fill `## What`, `## Why`, `## How tested`, and `## Dataset / artifact notes` with concrete content. "
+              "Delete `## Large PR justification` if the PR is not large; if it is large, fully complete that section. "
+              "Remove all placeholder HTML comments and check every remaining checklist item before opening the PR."
+          )
+
+          if has_selected_slice:
+              slice_ref = f"{milestone}/{slice_id}"
+              selection_summary = f"""This GitHub Actions run already resolved exactly one GSD slice that has local research, planning, and task artifacts and is ready for implementation:
+          - Milestone: {milestone}
+          - Slice: {slice_id}: {slice_title}
+          - Slice directory: {slice_dir}
+          - Roadmap file: {roadmap or 'not found'}
+          - Selection reason: {reason}"""
+              selection_instruction = (
+                  f"FIRST PRIORITY: implement the selected slice `{slice_ref}` exactly as described in `.gsd` Markdown. "
+                  "Treat `.gsd/STATE.md`, `.gsd/QUEUE.md`, the selected milestone roadmap, and the selected slice "
+                  "plan/context/task files as the execution source of truth. The selected slice directory may contain "
+                  "`tasks/T*-PLAN.md` files; use those task files as the implementation skeleton for the slice."
+              )
+              scope_instruction = (
+                  f"One Jules task/session may implement only one slice. Do not start, complete, mark complete, "
+                  f"or otherwise advance any slice other than `{slice_ref}`. If adjacent or later slices look easy, "
+                  "leave them untouched."
+              )
+              plan_instruction = (
+                  f"Execute the unfinished implementation tasks for `{slice_ref}`. If task plans exist, use them. "
+                  "When implementation work exists, do not stop after only changing `.gsd` state, gates, research, or plan files. "
+                  "If the selected slice genuinely lacks executable task plans, you may create them, but do not stop there; "
+                  "proceed to implement and verify the slice."
+              )
+              discovery_instruction = (
+                  "If the selected slice is already implemented after checkout, stop without opening a PR. "
+                  "Do not invent maintenance work and do not switch to another slice."
+              )
+              outside_scope_instruction = (
+                  f"While working, if you discover technical debt, missing tests, or architectural drift outside "
+                  f"`{slice_ref}`, do not fix it in this PR. Add a narrowly scoped future item to `.gsd/QUEUE.md` "
+                  "only if the repository workflow calls for it."
+              )
+              quality_instruction = (
+                  "Run the mandatory full repository validation before opening the PR: "
+                  "`uv run pre-commit run --hook-stage manual --all-files`. This command is required for Jules coding "
+                  "tasks and includes Ruff, APS/Gherkin parse, normal tests with coverage, CRAP risk hardening, "
+                  "DRY structural hardening, language mutation, and soft Gherkin mutation. These are manual-stage hooks and "
+                  "are not part of automatic `git commit` pre-commit execution. If it fails because of inherited "
+                  "repository-wide quality debt unrelated to the selected slice, document the exact failure and do not "
+                  "mark the selected task complete unless the selected slice itself is verified and the blocker is "
+                  "clearly outside scope."
+              )
+
+              pr_instruction = (
+                  f"Open exactly one pull request when done. {template_instruction} Include the "
+                  f"selected slice `{slice_ref}`, summarize implementation changes and `.gsd` task-state updates, "
+                  "and list the mandatory quality command plus every additional verification command run."
+              )
+              strict_scope = f"`{slice_ref}`"
+          else:
+              slice_ref = "the single slice you select for implementation"
+              selection_summary = """This workflow was manually dispatched, and the preflight selector did not resolve an execution-ready GSD slice automatically.
+          Manual dispatch is allowed, but it must still result in at most one `.gsd` slice being implemented."""
+              selection_instruction = (
+                  "FIRST PRIORITY: inspect `.gsd` Markdown and select exactly one slice that is next in line and not yet "
+                  "implemented. Prefer the active "
+                  "slice in `.gsd/STATE.md` if it is execution-ready; otherwise use the first unchecked `[ ]` execution-ready "
+                  "slice in the active milestone roadmap under `.gsd/milestones/`. Use `.gsd/QUEUE.md` only as supporting "
+                  "context for that one slice. The selected slice directory may contain `tasks/T*-PLAN.md` files; use "
+                  "those task files as the implementation skeleton for the slice."
+              )
+              scope_instruction = (
+                  "One Jules task/session may implement only one slice. After selecting the slice, do not start, "
+                  "complete, mark complete, or otherwise advance any other slice. If adjacent or later slices look "
+                  "easy, leave them untouched."
+              )
+              plan_instruction = (
+                  "Execute the unfinished implementation tasks for that one selected slice. If task plans exist, use them. "
+                  "When implementation work exists, do not stop after only changing `.gsd` state, gates, research, or plan files. "
+                  "If the selected slice genuinely lacks executable task plans, you may create them, but do not stop there; "
+                  "proceed to implement and verify the slice."
+              )
+              discovery_instruction = (
+                  "If no execution-ready `.gsd` slice can be confirmed after checkout, stop without opening a PR. "
+                  "Do not invent maintenance work and do not switch to another slice."
+              )
+              outside_scope_instruction = (
+                  "While working, if you discover technical debt, missing tests, or architectural drift outside the "
+                  "single selected slice, do not fix it in this PR. Add a narrowly scoped future item to `.gsd/QUEUE.md` "
+                  "only if the repository workflow calls for it."
+              )
+              quality_instruction = (
+                  "Run the mandatory full repository validation before opening the PR: "
+                  "`uv run pre-commit run --hook-stage manual --all-files`. This command is required for Jules coding "
+                  "tasks and includes Ruff, APS/Gherkin parse, normal tests with coverage, CRAP risk hardening, "
+                  "DRY structural hardening, language mutation, and soft Gherkin mutation. These are manual-stage hooks and "
+                  "are not part of automatic `git commit` pre-commit execution. If it fails because of inherited "
+                  "repository-wide quality debt unrelated to the selected slice, document the exact failure and do not "
+                  "mark the selected task complete unless the selected slice itself is verified and the blocker is "
+                  "clearly outside scope."
+              )
+
+              pr_instruction = (
+                  f"Open exactly one pull request when done. {template_instruction} Include the single "
+                  "selected slice, summarize implementation changes and `.gsd` task-state updates, and list the mandatory "
+                  "quality command plus every additional verification command run."
+              )
+              strict_scope = "the single selected implementation slice"
+          print(
+              f"""You are a digital agent working on invertix-take-home, a Python FastAPI and LangChain Deep Agents repository for a multi-tenant solar plant data chat application.
+
+          {selection_summary}
+
+          This is an implementation task. You must implement the selected slice in this PR.
+
+          TASK:
+          1. Read AGENTS.md first. Then read the scoped instruction files it points to for this task, especially `.github/instructions/code_writing_behavior.instructions.md`, `.github/instructions/python_quality_gates.instructions.md`, and any backend/frontend/testing instruction files relevant to the selected slice.
+          2. Read only Markdown files under `.gsd/**/*.md` for planning state. Ignore every non-Markdown file under `.gsd`, including JSONL files, runtime files, caches, generated state, and other artifacts. Read source and test files outside `.gsd` as needed to implement the selected slice.
+          3. {selection_instruction}
+          4. {scope_instruction}
+          5. {plan_instruction}
+          6. Implement the selected slice as a narrow PR: source/test/docs changes required by the selected slice plus the minimal `.gsd` task-state evidence for this slice only.
+          7. Add meaningful details about the implementation to the `.gsd` Markdown state for the selected slice, but DO NOT change the status of the slice itself. Do not mark unrelated tasks, requirements, or milestones complete.
+          8. {discovery_instruction}
+          9. {outside_scope_instruction}
+          10. {quality_instruction}
+          11. {pr_instruction}
+
+          STRICT RULES:
+          - Keep the PR strictly scoped to {strict_scope}. One Jules task equals one implementation slice maximum.
+          - Do not open a planning-only PR when the selected slice has implementation work available.
+          - Do not change the overall status of the slice in `.gsd` state files. You may add meaningful details, but the slice status must remain unchanged.
+          - Do not advance `.gsd/STATE.md`, add gates, or mark tasks complete unless the corresponding implementation and verification were actually done.
+          - Do not reorder `.gsd/QUEUE.md` or milestone roadmap items.
+          - Do not mark unrelated tasks, slices, milestones, or requirements complete.
+          - Preserve tenant isolation, role restrictions, user-owned chat history, generated-document ownership, and data.zip handling contracts.
+          - The full `uv run pre-commit run --hook-stage manual --all-files` validation batch is mandatory for Jules coding PRs. Do not replace it with only targeted tests or partial lint.
+          - The PR description must follow `.github/PULL_REQUEST_TEMPLATE.md`; do not submit a freeform body, leave placeholder comments, or leave checklist boxes unchecked. Consider the size of the PR: if the PR is large (over 400 lines or 15 files), you must include the "Large PR justification" section explaining why it cannot be split. If it is not large, delete that section.
+          - Do not commit raw data archives, generated PDF/Word/Excel artifacts, local databases, local caches, secrets, or local environment files.
+          - Do not modify any file under `.github/**`. If the selected task requires `.github` changes, stop without opening a PR and document that blocker.
+          - Never ask the user questions. Decide from repository context, proceed autonomously, and document assumptions in the PR.
+          """
+          )
+          PY
+          )"
+
+          BRANCH="${{ github.ref_name }}"
+          echo "Targeting startingBranch: ${BRANCH}"
+          if [ -n "${SELECTED_MILESTONE}" ] && [ -n "${SELECTED_SLICE}" ]; then
+            SESSION_TITLE="Implement GSD ${SELECTED_MILESTONE}/${SELECTED_SLICE} for ${BRANCH}"
+          else
+            SESSION_TITLE="Manual Jules implementation dispatch for ${BRANCH}"
+          fi
+
+          SESSION_PAYLOAD="$(jq -n \
+            --arg prompt "${PROMPT}" \
+            --arg source "${SOURCE_NAME}" \
+            --arg branch "${BRANCH}" \
+            --arg title "${SESSION_TITLE}" \
+            '{
+              prompt: $prompt,
+              title: $title,
+              sourceContext: {
+                source: $source,
+                githubRepoContext: {
+                  startingBranch: $branch
+                }
+              },
+              automationMode: "AUTO_CREATE_PR"
+            }')"
+
+          echo "Triggering Google Jules session for source ${SOURCE_NAME} on branch ${BRANCH}..."
+          curl --fail-with-body -sS \
+            -X POST "https://jules.googleapis.com/v1alpha/sessions" \
+            -H "x-goog-api-key: ${JULES_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "${SESSION_PAYLOAD}" \
+            | tee /tmp/jules-session.json
+
+          SESSION_URL="$(jq -r '.url // empty' /tmp/jules-session.json)"
+          SESSION_NAME="$(jq -r '.name // empty' /tmp/jules-session.json)"
+          if [ -n "${SESSION_URL}" ]; then
+            echo "Jules session: ${SESSION_URL}"
+          elif [ -n "${SESSION_NAME}" ]; then
+            echo "Jules session: ${SESSION_NAME}"
+          fi
