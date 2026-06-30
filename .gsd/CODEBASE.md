@@ -1,24 +1,16 @@
 # Codebase Map
 
-Generated: 2026-06-28T17:31:33Z | Files: 138 | Described: 0/138
-<!-- gsd:codebase-meta {"generatedAt":"2026-06-28T17:31:33Z","fingerprint":"a68bc06c1831760293a34616815d1ffa96e02283","fileCount":138,"truncated":false} -->
+Generated: 2026-06-30T09:27:11Z | Files: 154 | Described: 0/154
+<!-- gsd:codebase-meta {"generatedAt":"2026-06-30T09:27:11Z","fingerprint":"4e885bd73f70b404d0d6e645014491b17e0aa875","fileCount":154,"truncated":false} -->
 
 ### (root)/
 - `.gitignore`
 - `.pre-commit-config.yaml`
 - `.python-version`
 - `AGENTS.md`
-- `create_modules.py`
-- `generate_matches.py`
-- `plot_global_route.py`
-- `plot_global_zones.py`
-- `print_coords.py`
 - `pyproject.toml`
 - `README.md`
-- `regenerate_drone.py`
-- `satellite_drone_matcher.py`
 - `skills-lock.json`
-- `test_map_anchoring.py`
 
 ### .github/
 - `.github/PULL_REQUEST_TEMPLATE.md`
@@ -50,6 +42,20 @@ Generated: 2026-06-28T17:31:33Z | Files: 138 | Described: 0/138
 - `.github/scripts/run_acceptance_mutation_worker.py`
 - `.github/scripts/run_acceptance_mutation_worker.sh`
 
+### .github/scripts/scripts/
+- `.github/scripts/scripts/aps_tools_common.sh`
+- `.github/scripts/scripts/bootstrap_dev_env.sh`
+- `.github/scripts/scripts/crap_check.py`
+- `.github/scripts/scripts/dry_check.py`
+- `.github/scripts/scripts/install_aps_tools.sh`
+- `.github/scripts/scripts/precommit_aps_gate.sh`
+- `.github/scripts/scripts/precommit_coverage_gate.sh`
+- `.github/scripts/scripts/precommit_gherkin_mutation_gate.sh`
+- `.github/scripts/scripts/precommit_language_mutation_gate.py`
+- `.github/scripts/scripts/resolve_gsd_slice.py`
+- `.github/scripts/scripts/run_acceptance_mutation_worker.py`
+- `.github/scripts/scripts/run_acceptance_mutation_worker.sh`
+
 ### .github/skills/mvsec-benchmarking/
 - `.github/skills/mvsec-benchmarking/SKILL.md`
 
@@ -69,6 +75,14 @@ Generated: 2026-06-28T17:31:33Z | Files: 138 | Described: 0/138
 - `.github/workflows/ci-tests.yml`
 - `.github/workflows/jules_auto_merge.yml`
 - `.github/workflows/jules_next_task.yml`
+
+### .github/workflows/workflows/
+- `.github/workflows/workflows/ci-lint.yml`
+- `.github/workflows/workflows/ci-slow-lane.yml`
+- `.github/workflows/workflows/ci-structure.yml`
+- `.github/workflows/workflows/ci-tests.yml`
+- `.github/workflows/workflows/jules_auto_merge.yml`
+- `.github/workflows/workflows/jules_next_task.yml`
 
 ### configs/
 - `configs/google_earth_sequence.yaml`
@@ -186,6 +200,9 @@ Generated: 2026-06-28T17:31:33Z | Files: 138 | Described: 0/138
 - `tests/evaluation/test_metrics_synthetic.py`
 - `tests/evaluation/test_plots_synthetic.py`
 
+### tests/map_matching/
+- `tests/map_matching/test_processing.py`
+
 ### tests/nav_benchmark/
 - `tests/nav_benchmark/__init__.py`
 
@@ -194,9 +211,16 @@ Generated: 2026-06-28T17:31:33Z | Files: 138 | Described: 0/138
 - `tests/nav_benchmark/datasets/test_mvsec.py`
 - `tests/nav_benchmark/datasets/test_synthetic_sequence.py`
 
+### tests/scripts/
+- `tests/scripts/test_experiment_routes.py`
+- `tests/scripts/test_simulate_drone.py`
+
 ### tests/synthetic/
+- `tests/synthetic/test_config.py`
+- `tests/synthetic/test_frame_source.py`
 - `tests/synthetic/test_geo.py`
 - `tests/synthetic/test_imu_from_trajectory.py`
+- `tests/synthetic/test_preview.py`
 - `tests/synthetic/test_recorder.py`
 - `tests/synthetic/test_rgb_to_events.py`
 
