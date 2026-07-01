@@ -179,7 +179,7 @@ def test_check_failure_notes_valid_clean(tmp_path):
         "# Run Failure Notes\n"
         "## Health Summary\n"
         "## Detected Degraded/Lost Intervals\n"
-        "No degraded or lost intervals were detected.\n"
+        "No degraded or lost intervals were detected during this run.\n"
     )
     path.write_text(content, encoding="utf-8")
 
