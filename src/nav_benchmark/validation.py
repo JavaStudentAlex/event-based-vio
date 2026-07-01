@@ -323,8 +323,8 @@ def _failure_notes_manifest_error(path: Path, content: str) -> str | None:
     failure_count = _failure_count_from_manifest(manifest_path)
     if failure_count is None:
         return None
-    if failure_count == 0 and "No degraded or lost intervals were detected during this run." not in content:
-        return "Expected 'No degraded or lost intervals were detected during this run.' because health counts show no failures"
+    if failure_count == 0 and "No degraded or lost intervals were detected." not in content:
+        return "Expected 'No degraded or lost intervals were detected.' because health counts show no failures"
     return None
 
 

@@ -235,12 +235,12 @@ def test_check_failure_notes(tmp_path):
 
     res = check_failure_notes(path)
     assert not res.passed
-    assert "Expected 'No degraded or lost intervals were detected during this run.'" in res.message
+    assert "Expected 'No degraded or lost intervals were detected.'" in res.message
 
     # Fully valid with zero failures
     with open(path, "w") as f:
         f.write(
-            "# Run Failure Notes\n## Health Summary\n## Detected Degraded/Lost Intervals\nNo degraded or lost intervals were detected during this run.\n"
+            "# Run Failure Notes\n## Health Summary\n## Detected Degraded/Lost Intervals\nNo degraded or lost intervals were detected.\n"
         )
     res = check_failure_notes(path)
     assert res.passed
