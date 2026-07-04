@@ -85,7 +85,7 @@ def _health_intervals(trajectory: Trajectory) -> list[tuple[str, float, float]]:
 def _intervals_text(intervals: list[tuple[str, float, float]]) -> str:
     degraded_lost_intervals = [item for item in intervals if item[0] in ("DEGRADED", "LOST")]
     if not degraded_lost_intervals:
-        return "No degraded or lost intervals were detected during this run."
+        return "No degraded or lost intervals were detected."
     lines = []
     for state, t_start, t_end in degraded_lost_intervals:
         duration = t_end - t_start
