@@ -1,4 +1,4 @@
-default_stages: [manual]
+default_stages: [pre-commit]
 exclude: '^(\.github/|\.skillss/|\.skills/|\.agents/|\.gsd/(?!.*\.html$)|skills/|mutants/|\.venv/)'
 
 repos:
@@ -24,7 +24,6 @@ repos:
         name: Ruff
         entry: bash -c 'uv run --only-dev ruff check .'
         language: system
-        stages: [manual]
         pass_filenames: false
         always_run: true
 
@@ -32,7 +31,6 @@ repos:
         name: Ruff format check
         entry: bash -c 'uv run --only-dev ruff format --check .'
         language: system
-        stages: [manual]
         pass_filenames: false
         always_run: true
 
@@ -44,7 +42,6 @@ repos:
           if [ "${#py_files[@]}" -eq 0 ]; then echo "No production Python files found; skipping mypy."; exit 0; fi;
           uv run --only-dev mypy "${py_files[@]}"'
         language: system
-        stages: [manual]
         pass_filenames: false
         always_run: true
 
@@ -52,7 +49,6 @@ repos:
         name: Bandit
         entry: bash -c 'uv run --only-dev bandit -q -r -c pyproject.toml .'
         language: system
-        stages: [manual]
         pass_filenames: false
         always_run: true
 
@@ -60,7 +56,6 @@ repos:
         name: uv audit
         entry: bash -c 'uv audit --preview-features audit'
         language: system
-        stages: [manual]
         pass_filenames: false
         always_run: true
 
@@ -73,7 +68,6 @@ repos:
           if [ "${#existing_py_files[@]}" -eq 0 ]; then echo "No Python files found; skipping py_compile."; exit 0; fi;
           uv run python -m py_compile "${existing_py_files[@]}"'
         language: system
-        stages: [manual]
         pass_filenames: false
         always_run: true
 
@@ -81,7 +75,6 @@ repos:
         name: APS/Gherkin parse and IR DRY
         entry: bash .github/scripts/precommit_aps_gate.sh
         language: system
-        stages: [manual]
         pass_filenames: false
         always_run: true
 
@@ -89,7 +82,6 @@ repos:
         name: Normal tests with coverage
         entry: bash .github/scripts/precommit_coverage_gate.sh
         language: system
-        stages: [manual]
         pass_filenames: false
         always_run: true
 
@@ -97,7 +89,6 @@ repos:
         name: CRAP risk hardening check
         entry: uv run python .github/scripts/crap_check.py --coverage-json build/slow-lane/coverage.json --max-score 6
         language: system
-        stages: [manual]
         types: [python]
         exclude: ^tests/
         require_serial: true
@@ -106,7 +97,6 @@ repos:
         name: DRY structural hardening check
         entry: uv run python .github/scripts/dry_check.py --min-lines 8 --max-groups 0
         language: system
-        stages: [manual]
         types: [python]
         exclude: ^tests/
         require_serial: true

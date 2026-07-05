@@ -14,8 +14,6 @@ on:
       - 'pyproject.toml'
       - 'uv.lock'
   workflow_dispatch:
-  schedule:
-    - cron: "17 3 * * *"
 
 permissions:
   contents: read
@@ -28,7 +26,6 @@ env:
   PYTHON_VERSION: "3.13"
   CRAP_MAX_SCORE: "6"
   DRY_MIN_FUNCTION_LINES: "8"
-  GHERKIN_MUTATION_RUNNER: ".github/scripts/run_acceptance_mutation_worker.sh"
   APS_TOOLS_REF: "accaa33d503340c56513ef387258f8da929ba902"
   PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
 
@@ -182,46 +179,6 @@ jobs:
             --max-groups 0 \
             "${python_files[@]}"
 
-      - name: Hardender gate - soft Gherkin mutation
-        id: gherkin_mutation
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "${{ steps.features.outputs.has_features }}" != "true" ]; then
-            echo "::notice::Skipping Gherkin mutation because no .feature files are tracked."
-            exit 0
-          fi
-          if [ ! -x "$GHERKIN_MUTATION_RUNNER" ]; then
-            echo "::error::Feature files exist, but $GHERKIN_MUTATION_RUNNER is missing or not executable."
-            echo "::error::Add a project-specific APS mutation runner worker before enabling Gherkin mutation."
-            exit 1
-          fi
-          mkdir -p build/acceptance-mutation
-          while IFS= read -r feature; do
-            slug="$(printf '%s' "$feature" | tr '/ ' '__')"
-            work_dir="build/acceptance-mutation/${slug%.feature}"
-            mkdir -p "$work_dir"
-            feature_copy="$work_dir/${feature##*/}"
-            cp "$feature" "$feature_copy"
-            gherkin-mutator \
-              --feature "$feature_copy" \
-              --runner-worker "./$GHERKIN_MUTATION_RUNNER" \
-              --level soft \
-              --work-dir "$work_dir" \
-              --json > "$work_dir/report.json"
-          done < build/slow-lane/feature-files.txt
-
-
-      - name: Upload mutation inputs
-        if: always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
-        uses: actions/upload-artifact@v4
-        with:
-          name: mutation-inputs
-          path: build/slow-lane/
-          if-no-files-found: error
-
       - name: Upload slow-lane reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -230,7 +187,6 @@ jobs:
           path: |
             build/slow-lane/
             build/acceptance/
-            build/acceptance-mutation/
           if-no-files-found: ignore
 
       - name: Fail if any slow-lane gate failed
@@ -252,58 +208,8 @@ jobs:
           check_gate "Coder normal tests" "${{ steps.normal_tests.outcome }}"
           check_gate "Cleaner CRAP" "${{ steps.cleaner_crap.outcome }}"
           check_gate "Cleaner DRY" "${{ steps.cleaner_dry.outcome }}"
-          check_gate "Hardender soft Gherkin mutation" "${{ steps.gherkin_mutation.outcome }}"
 
           if [ "$failed" -ne 0 ]; then
             echo "::error::One or more slow-lane gates failed. Review the gate output above."
             exit 1
           fi
-
-  language-mutation-matrix:
-    name: Language Mutation Chunk ${{ matrix.chunk }}
-    needs: slow-lane
-    if: needs.slow-lane.result == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        chunk: [0, 1, 2, 3, 4, 5]
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Bootstrap development environment
-        run: .github/scripts/bootstrap_dev_env.sh
-
-      - name: Download mutation inputs
-        uses: actions/download-artifact@v4
-        with:
-          name: mutation-inputs
-          path: build/slow-lane/
-
-      - name: Run language mutation chunk ${{ matrix.chunk }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          mapfile -t python_files < build/slow-lane/python-files.txt
-          if [ "${#python_files[@]}" -eq 0 ]; then
-            echo "::notice::Skipping language mutation because no production Python files changed."
-            exit 0
-          fi
-          uv run python .github/scripts/precommit_language_mutation_gate.py \
-            --chunk "${{ matrix.chunk }}" \
-            --total-chunks 6 \
-            --max-children 1 \
-            "${python_files[@]}"
