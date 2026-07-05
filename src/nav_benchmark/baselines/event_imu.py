@@ -25,7 +25,7 @@ from scipy.spatial.transform import Rotation
 from nav_benchmark.baselines.base import BaseOdometryBackend, EstimatorRunResult
 from nav_benchmark.baselines.common import health_from_confidence, latency_per_sample_ms
 from nav_benchmark.baselines.imu import ImuOnlyBackend, ImuOnlyConfig
-from nav_benchmark.datasets.mvsec import MvsecSequence
+from nav_benchmark.datasets.mvsec import Calibration, MvsecSequence
 from nav_benchmark.events.representations import ensure_event_frames
 from nav_benchmark.events.shift import ShiftEstimate, estimate_frame_shift
 from nav_benchmark.trajectory.models import PoseHealth, Trajectory
@@ -161,6 +161,15 @@ def _interp_positions(imu_t: np.ndarray, positions: np.ndarray, at_t: float) -> 
     return np.array([np.interp(at_t, imu_t, positions[:, axis]) for axis in range(3)], dtype=np.float64)
 
 
+
+def _extrinsics_rotation_from_calibration(calibration: Calibration) -> Rotation | None:
+    if not calibration.imu_cam_transform_available:
+        return None
+    matrix = calibration.data.get("imu_cam_transform")
+    if matrix is None or matrix.shape != (4, 4):
+        return None
+    return Rotation.from_matrix(matrix[:3, :3])
+
 def _mean_angular_velocity(imu: np.ndarray, t_start: float, t_end: float) -> np.ndarray:
     t = np.asarray(imu["t"], dtype=np.float64)
     mask = (t >= t_start) & (t <= t_end)
@@ -207,6 +216,7 @@ def _event_world_displacement(
     imu_trajectory: Trajectory,
     focal_px: float,
     config: EventImuConfig,
+    cam_to_body: Rotation | None = None,
 ) -> np.ndarray:
     dt = t_end - t_start
     shift = estimate.shift_px
@@ -215,6 +225,9 @@ def _event_world_displacement(
         shift = shift - _rotational_flow_px(omega, focal_px, dt)
 
     velocity_cam = _camera_velocity_from_shift(shift, focal_px, config.assumed_scene_depth_m, dt)
+    if cam_to_body is not None:
+        velocity_cam = cam_to_body.apply(velocity_cam)
+
     rotation_world_body = _orientation_at(
         imu_trajectory.timestamps, imu_trajectory.orientations, 0.5 * (t_start + t_end)
     )
@@ -242,6 +255,7 @@ def _pair_cue(
     imu_trajectory: Trajectory,
     focal_px: float,
     config: EventImuConfig,
+    cam_to_body: Rotation | None = None,
 ) -> _PairCue:
     cue = _PairCue(t_start=t_start, t_end=t_end, confidence=estimate.confidence, reason=estimate.reason)
     if not estimate.valid or t_end - t_start <= 0.0:
@@ -250,7 +264,7 @@ def _pair_cue(
         cue.reason = "low_confidence"
         return cue
 
-    displacement_event = _event_world_displacement(estimate, t_start, t_end, imu, imu_trajectory, focal_px, config)
+    displacement_event = _event_world_displacement(estimate, t_start, t_end, imu, imu_trajectory, focal_px, config, cam_to_body)
     innovation = displacement_event - _imu_displacement(imu_trajectory, t_start, t_end)
     if not np.all(np.isfinite(innovation)):
         cue.confidence = 0.0
@@ -322,6 +336,7 @@ def _build_cues(
     imu_trajectory: Trajectory,
     focal_px: float,
     config: EventImuConfig,
+    cam_to_body: Rotation | None = None,
 ) -> list[_PairCue]:
     return [
         _pair_cue(
@@ -332,6 +347,7 @@ def _build_cues(
             imu_trajectory,
             focal_px,
             config,
+            cam_to_body,
         )
         for i in range(1, len(frame_t))
     ]
@@ -423,7 +439,10 @@ class EventImuBackend(BaseOdometryBackend):
         frames, frame_t = _require_event_frames(sequence, cfg)
         focal_px = _resolve_focal_length_px(sequence, cfg)
 
-        cues = _build_cues(frames, frame_t, imu, imu_trajectory, focal_px, cfg)
+        cam_to_body = _extrinsics_rotation_from_calibration(sequence.calibration)
+        self.diagnostics["extrinsics_source"] = "calibration" if cam_to_body is not None else "identity_fallback"
+
+        cues = _build_cues(frames, frame_t, imu, imu_trajectory, focal_px, cfg, cam_to_body)
 
         imu_t = np.asarray(imu_trajectory.timestamps, dtype=np.float64)
         offsets = _accumulated_offsets(imu_t, cues)
@@ -436,7 +455,7 @@ class EventImuBackend(BaseOdometryBackend):
 
         confidence = np.clip(cfg.base_imu_confidence + cfg.event_confidence_weight * event_confidence, 0.0, 1.0)
         health = _merged_health(confidence, imu_trajectory, corrected, imu_t, cfg)
-        self.diagnostics = _diagnostics_summary(cues, frame_t, covered, imu_t, focal_px)
+        self.diagnostics.update(_diagnostics_summary(cues, frame_t, covered, imu_t, focal_px))
 
         return Trajectory(
             timestamps=imu_trajectory.timestamps,

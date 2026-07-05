@@ -64,6 +64,15 @@ def _final_drift_m(trajectory) -> float:
     return float(np.linalg.norm(trajectory.positions[-1]))
 
 
+
+def _shifting_scene_sequence(accel_bias_x: float = 2.0, frame_count: int = 40, duration_sec: float = 2.0):
+    base = _textured_frame()
+    frames = []
+    for i in range(frame_count):
+        frames.append(np.roll(base, i * 2, axis=1))
+    frames = np.array(frames)
+    return _static_scene_sequence(accel_bias_x=accel_bias_x, frame_count=frame_count, duration_sec=duration_sec, frames=frames)
+
 class TestEventCorrectionEffect:
     def test_static_event_scene_bounds_imu_drift(self):
         sequence = _static_scene_sequence()
@@ -109,6 +118,44 @@ class TestEventCorrectionEffect:
         covered_health = [str(h) for h in trajectory.health[covered]]
         assert covered_health.count(PoseHealth.OK.value) > 0.9 * len(covered_health)
 
+
+
+    def test_extrinsics_rotation_changes_correction(self):
+        # 1. Run with identity
+        sequence_identity = _shifting_scene_sequence(accel_bias_x=2.0)
+        backend_identity = EventImuBackend()
+        traj_identity = backend_identity.run(sequence_identity, config=EventImuConfig(imu_config=ImuOnlyConfig()))
+
+        # 2. Run with non-trivial rotation (45 deg around Z)
+        sequence_rot = _shifting_scene_sequence(accel_bias_x=2.0)
+        from scipy.spatial.transform import Rotation
+        sequence_rot.calibration.imu_cam_transform_available = True
+        rot_matrix = Rotation.from_euler('z', 45, degrees=True).as_matrix()
+        transform = np.eye(4)
+        transform[:3, :3] = rot_matrix
+        sequence_rot.calibration.data["imu_cam_transform"] = transform
+
+        backend_rot = EventImuBackend()
+        traj_rot = backend_rot.run(sequence_rot, config=EventImuConfig(imu_config=ImuOnlyConfig()))
+
+        # Positions should differ since velocity is rotated differently before displacement
+        assert not np.allclose(traj_identity.positions, traj_rot.positions)
+
+    def test_extrinsics_fallback_to_identity(self):
+        sequence = _static_scene_sequence()
+        sequence.calibration.imu_cam_transform_available = False
+        backend = EventImuBackend()
+        backend.run(sequence, config=EventImuConfig(imu_config=ImuOnlyConfig()))
+        assert backend.diagnostics["extrinsics_source"] == "identity_fallback"
+
+    def test_extrinsics_diagnostics_field(self):
+        sequence = _static_scene_sequence()
+        sequence.calibration.imu_cam_transform_available = True
+        transform = np.eye(4)
+        sequence.calibration.data["imu_cam_transform"] = transform
+        backend = EventImuBackend()
+        backend.run(sequence, config=EventImuConfig(imu_config=ImuOnlyConfig()))
+        assert backend.diagnostics["extrinsics_source"] == "calibration"
 
 class TestFailureVisibility:
     def test_empty_event_frames_leave_imu_backbone_untouched(self):
