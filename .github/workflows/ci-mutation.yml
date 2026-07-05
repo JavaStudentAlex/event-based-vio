@@ -33,12 +33,27 @@ jobs:
 
     outputs:
       has_python: ${{ steps.python-targets.outputs.has_python }}
+      has_features: ${{ steps.feature-targets.outputs.has_features }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Discover APS/Gherkin feature files
+        id: feature-targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-files '*.feature' \
+            | grep -Ev '(^|/)(\.agents|\.codex|\.gsd|\.skills|skills)/' \
+            | grep -q .; then
+            echo "has_features=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_features=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No .feature files tracked; Gherkin mutation will skip."
+          fi
 
       - name: Get changed python files
         id: changed-python-files
@@ -93,6 +108,8 @@ jobs:
 
   gherkin-mutation:
     name: Soft Gherkin mutation
+    needs: discover
+    if: needs.discover.outputs.has_features == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
