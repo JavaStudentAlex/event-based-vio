@@ -105,9 +105,9 @@ def test_visual_event_event_imu_and_ensemble_outputs(tmp_path):
     event = EventVoBackend().run(sequence, config=visual_config)
     event_imu = EventImuBackend().run(
         sequence,
-        config=EventImuConfig(imu_config=imu_config, event_vo_config=visual_config),
+        config=EventImuConfig(imu_config=imu_config),
     )
-    default_event_imu = EventImuBackend().run(sequence, config=EventImuConfig(event_vo_config=visual_config))
+    default_event_imu = EventImuBackend().run(sequence, config=EventImuConfig())
     image_imu = ImageImuBackend().run(
         sequence,
         config=ImageImuConfig(imu_config=imu_config, rgb_vo_config=visual_config),

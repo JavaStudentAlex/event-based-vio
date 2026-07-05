@@ -1,5 +1,6 @@
 import csv
 import glob
+import json
 import os
 import subprocess
 import sys
@@ -120,6 +121,69 @@ def test_validate_after_run_and_eval(tmp_path):
     assert res_val.returncode == 0, f"Validation failed: {res_val.stderr}"
     assert "Validation:" in res_val.stdout
     assert "checks passed" in res_val.stdout
+
+
+def test_validate_locks_canonical_artifact_strings(tmp_path):
+    """S06 regression: the producer strings validation depends on must stay canonical.
+
+    Guards the exact string domains that historically drifted apart:
+    run lifecycle status, evaluation status, alignment policy strings, and the
+    clean-run failure notes sentence.
+    """
+    input_dir = tmp_path / "synthetic_input"
+    _write_non_coplanar_sequence(input_dir)
+
+    output_root = tmp_path / "runs"
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).parent.parent.parent / "src")
+
+    run_cmd = [
+        sys.executable,
+        "-m",
+        "nav_benchmark.run",
+        "run",
+        "--method",
+        "imu_only",
+        "--dataset",
+        "synthetic",
+        "--sequence",
+        "s06_canonical",
+        "--input",
+        str(input_dir),
+        "--output-root",
+        str(output_root),
+    ]
+    res_run = subprocess.run(run_cmd, env=env, capture_output=True, text=True)
+    assert res_run.returncode == 0, f"Run failed: {res_run.stderr}"
+
+    run_dirs = glob.glob(str(output_root / "*_imu_only_s06_canonical"))
+    assert len(run_dirs) == 1
+    run_dir = Path(run_dirs[0])
+
+    eval_cmd = [sys.executable, "-m", "nav_benchmark.run", "eval", "--run-dir", str(run_dir)]
+    res_eval = subprocess.run(eval_cmd, env=env, capture_output=True, text=True)
+    assert res_eval.returncode == 0, f"Eval failed: {res_eval.stderr}"
+
+    manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "success"
+    assert manifest["alignment"]["policy"] == "nearest_neighbor"
+    assert manifest["evaluation"]["status"] == "success"
+
+    metrics = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["status"] == "OK"
+    assert metrics["config"]["alignment_policy"] == "se3"
+
+    notes = (run_dir / "failure_notes.md").read_text(encoding="utf-8")
+    ok_run = manifest["health_counts"]["DEGRADED"] == 0 and manifest["health_counts"]["LOST"] == 0
+    if ok_run:
+        assert "No degraded or lost intervals were detected." in notes
+
+    val_cmd = [sys.executable, "-m", "nav_benchmark.run", "validate", "--run-dir", str(run_dir)]
+    res_val = subprocess.run(val_cmd, env=env, capture_output=True, text=True)
+    assert res_val.returncode == 0, f"Validation failed: {res_val.stdout}\n{res_val.stderr}"
+    assert "Validation: 11/11 checks passed." in res_val.stdout
+    assert "[FAIL]" not in res_val.stdout
 
 
 def test_validate_run_only_skip_eval(tmp_path):

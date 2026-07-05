@@ -9,6 +9,7 @@ import numpy as np
 from evo.core import metrics as evo_metrics
 from evo.core.trajectory import PoseTrajectory3D
 from evo.core.units import Unit
+from scipy.spatial.transform import Rotation
 
 from nav_benchmark.trajectory.models import PoseHealth, Trajectory
 from nav_benchmark.trajectory.sync import synchronize_nearest_neighbor
@@ -29,6 +30,7 @@ class EvalConfig:
     outlier_rejection: str = "none"
     rpe_delta_m: float = 1.0
     drift_bin_width_m: float = 20.0
+    distance_markers_m: tuple[float, ...] = (20.0, 50.0, 100.0, 200.0)
 
 
 @dataclass
@@ -65,6 +67,8 @@ class RuntimeMetrics:
     latency_median_ms: float | None
     latency_p95_ms: float | None
     latency_max_ms: float | None
+    total_processing_time_sec: float | None = None
+    real_time_factor: float | None = None
 
 
 @dataclass
@@ -102,6 +106,10 @@ class MetricSummary:
     rpe_max: float
     final_drift: float
     cumulative_distance: float
+    drift_percent: float | None = None
+    heading_error_mean_deg: float | None = None
+    heading_error_p95_deg: float | None = None
+    error_at_distance_m: dict[str, float | None] = field(default_factory=dict)
 
 
 @dataclass
@@ -345,34 +353,49 @@ def _sample_durations(timestamps: np.ndarray) -> np.ndarray:
     return durations
 
 
+def _finite_latencies(latency_ms: np.ndarray | None) -> np.ndarray:
+    if latency_ms is None:
+        return np.array([], dtype=np.float64)
+    latencies = np.asarray(latency_ms, dtype=np.float64)
+    return latencies[np.isfinite(latencies)]
+
+
+def _latency_statistics(finite_latency: np.ndarray) -> dict[str, float | None]:
+    if finite_latency.size == 0:
+        return {"mean": None, "median": None, "p95": None, "max": None}
+    return {
+        "mean": float(np.mean(finite_latency)),
+        "median": float(np.median(finite_latency)),
+        "p95": float(np.percentile(finite_latency, 95)),
+        "max": float(np.max(finite_latency)),
+    }
+
+
+def _real_time_factor(duration_sec: float, total_processing_time_sec: float | None) -> float | None:
+    if total_processing_time_sec is None or total_processing_time_sec <= 0.0 or duration_sec <= 0.0:
+        return None
+    # > 1.0 means the method processed the sequence faster than real time.
+    return duration_sec / total_processing_time_sec
+
+
 def _compute_runtime_metrics(timestamps: np.ndarray, latency_ms: np.ndarray | None) -> RuntimeMetrics:
     duration_sec = float(timestamps[-1] - timestamps[0]) if len(timestamps) > 1 else 0.0
     odometry_frequency_hz = float((len(timestamps) - 1) / duration_sec) if duration_sec > 0.0 else 0.0
 
-    finite_latency = np.array([], dtype=np.float64)
-    if latency_ms is not None:
-        latencies = np.asarray(latency_ms, dtype=np.float64)
-        finite_latency = latencies[np.isfinite(latencies)]
-
-    if finite_latency.size == 0:
-        latency_mean_ms = None
-        latency_median_ms = None
-        latency_p95_ms = None
-        latency_max_ms = None
-    else:
-        latency_mean_ms = float(np.mean(finite_latency))
-        latency_median_ms = float(np.median(finite_latency))
-        latency_p95_ms = float(np.percentile(finite_latency, 95))
-        latency_max_ms = float(np.max(finite_latency))
+    finite_latency = _finite_latencies(latency_ms)
+    latency_stats = _latency_statistics(finite_latency)
+    total_processing_time_sec = float(np.sum(finite_latency) / 1000.0) if finite_latency.size else None
 
     return RuntimeMetrics(
         update_count=len(timestamps),
         duration_sec=duration_sec,
         odometry_frequency_hz=odometry_frequency_hz,
-        latency_mean_ms=latency_mean_ms,
-        latency_median_ms=latency_median_ms,
-        latency_p95_ms=latency_p95_ms,
-        latency_max_ms=latency_max_ms,
+        latency_mean_ms=latency_stats["mean"],
+        latency_median_ms=latency_stats["median"],
+        latency_p95_ms=latency_stats["p95"],
+        latency_max_ms=latency_stats["max"],
+        total_processing_time_sec=total_processing_time_sec,
+        real_time_factor=_real_time_factor(duration_sec, total_processing_time_sec),
     )
 
 
@@ -624,6 +647,42 @@ def _rpe_statistics(
         return {name: float("nan") for name in ("rmse", "mean", "median", "std", "min", "max")}
 
 
+def _drift_percent(final_drift: float, cumulative_distance: float) -> float | None:
+    if cumulative_distance <= 0.0:
+        return None
+    return final_drift / cumulative_distance * 100.0
+
+
+def _yaw_deg_from_xyzw(orientations_xyzw: np.ndarray) -> np.ndarray:
+    return np.degrees(Rotation.from_quat(orientations_xyzw).as_euler("zyx")[:, 0])
+
+
+def _heading_error_stats_deg(
+    est_orientations_xyzw: np.ndarray, ref_orientations_xyzw: np.ndarray
+) -> tuple[float | None, float | None]:
+    """Mean and p95 absolute yaw difference in degrees, wrapped to [-180, 180]."""
+    if len(est_orientations_xyzw) == 0:
+        return None, None
+    diff = _yaw_deg_from_xyzw(est_orientations_xyzw) - _yaw_deg_from_xyzw(ref_orientations_xyzw)
+    wrapped = (diff + 180.0) % 360.0 - 180.0
+    errors = np.abs(wrapped)
+    return float(np.mean(errors)), float(np.percentile(errors, 95))
+
+
+def _error_at_distance_markers(
+    ate_errors: np.ndarray, cum_dists_matched: np.ndarray, markers: tuple[float, ...]
+) -> dict[str, float | None]:
+    """Error magnitude at the first matched pose reaching each travelled-distance marker."""
+    result: dict[str, float | None] = {}
+    for marker in markers:
+        reached = cum_dists_matched >= marker
+        if np.any(reached):
+            result[f"{marker:g}"] = float(ate_errors[int(np.argmax(reached))])
+        else:
+            result[f"{marker:g}"] = None
+    return result
+
+
 def _metric_summary(
     matched: _MatchedTrajectoryData, alignment: _AlignmentData, eligible_positions: np.ndarray, config: EvalConfig
 ) -> tuple[MetricSummary, np.ndarray, np.ndarray]:
@@ -655,6 +714,11 @@ def _metric_summary(
     cum_dists_matched = cum_dists_ok_deg[matched.matched_est_filt_idx]
     final_drift = float(ate_errors[-1]) if len(ate_errors) > 0 else 0.0
 
+    ref_orientations_xyzw = matched.ref_orientations_wxyz[:, [1, 2, 3, 0]]
+    heading_mean, heading_p95 = _heading_error_stats_deg(
+        alignment.orientations_xyzw[matched.matched_est_orig_idx], ref_orientations_xyzw
+    )
+
     return (
         MetricSummary(
             ate_rmse=ate_rmse,
@@ -671,6 +735,10 @@ def _metric_summary(
             rpe_max=rpe["max"],
             final_drift=final_drift,
             cumulative_distance=cumulative_distance,
+            drift_percent=_drift_percent(final_drift, cumulative_distance),
+            heading_error_mean_deg=heading_mean,
+            heading_error_p95_deg=heading_p95,
+            error_at_distance_m=_error_at_distance_markers(ate_errors, cum_dists_matched, config.distance_markers_m),
         ),
         ate_errors,
         cum_dists_matched,

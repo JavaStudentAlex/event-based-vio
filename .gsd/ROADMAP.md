@@ -2,6 +2,4 @@
 
 ## Milestones
 
-- 🔄 **M001-ncx5an: MVSEC Pipeline and IMU Sanity Benchmark** (`depends:[—]`)
-- ⬜ **M002: First Event+IMU Odometry Backend** (`depends:[—]`)
-- ⬜ **M003: Strong Baselines and Benchmark Reporting** (`depends:[—]`)
+No active milestones are currently registered. Historical milestone and slice artifacts were removed from the filesystem and pruned from the GSD database; decisions, requirements, and memory insights were preserved.

@@ -258,6 +258,114 @@ def write_trajectory_comparison_plot(
     _save_png_and_svg(fig, png_path, svg_path, "trajectory comparison")
 
 
+def _drift_bin_centers_and_medians(drift_bins: list[dict]) -> tuple[list[float], list[float]]:
+    centers: list[float] = []
+    medians: list[float] = []
+    for bin_data in drift_bins:
+        median = bin_data.get("median_error")
+        if median is None:
+            continue
+        centers.append(0.5 * (float(bin_data["bin_start"]) + float(bin_data["bin_end"])))
+        medians.append(float(median))
+    return centers, medians
+
+
+def write_method_drift_comparison_plot(
+    drift_bins_by_method: dict[str, list[dict]],
+    output_path: str | Path,
+    sequence: str | None = None,
+    title: str | None = None,
+) -> None:
+    """Plot median drift per distance bin for several methods on one axis."""
+    if not drift_bins_by_method:
+        raise PlottingError("At least one method is required for the drift comparison plot")
+
+    png_path, svg_path = _plot_output_paths(output_path)
+    fig, ax = plt.subplots(figsize=(9, 6))
+    plotted = 0
+    for method in sorted(drift_bins_by_method):
+        centers, medians = _drift_bin_centers_and_medians(drift_bins_by_method[method])
+        if not centers:
+            continue
+        ax.plot(centers, medians, marker="o", linewidth=1.5, label=method)
+        plotted += 1
+
+    if plotted == 0:
+        plt.close(fig)
+        raise PlottingError("No method provided drift bins with median errors to compare")
+
+    ax.set_xlabel("Distance Travelled [m]")
+    ax.set_ylabel("Median Position Error [m]")
+    ax.grid(True, linestyle=":", alpha=0.6)
+    ax.set_title(_title_lines("Drift vs Distance by Method", title, sequence))
+    ax.legend()
+    fig.tight_layout()
+    _save_png_and_svg(fig, png_path, svg_path, "method drift comparison")
+
+
+_HEALTH_COLORS = {
+    "OK": "#2ca02c",
+    "DEGRADED": "#ff9f1c",
+    "LOST": "#d62728",
+    "INVALID": "#7f7f7f",
+}
+
+
+def _health_segments(timestamps: np.ndarray, health: np.ndarray) -> list[tuple[float, float, str]]:
+    """Contiguous (start, duration, label) spans of identical health labels."""
+    labels = np.array([str(value) for value in health], dtype=object)
+    boundaries = np.flatnonzero(labels[1:] != labels[:-1]) + 1
+    starts = np.concatenate(([0], boundaries))
+    ends = np.concatenate((boundaries, [len(labels)]))
+    segments = []
+    for lo, hi in zip(starts, ends, strict=True):
+        t_start = float(timestamps[lo])
+        t_stop = float(timestamps[hi - 1]) if hi - 1 > lo else t_start
+        segments.append((t_start, max(t_stop - t_start, 0.0), str(labels[lo])))
+    return segments
+
+
+def _draw_status_rows(ax, t: np.ndarray, methods: list[str], health_by_method: dict[str, np.ndarray]) -> None:
+    for row, method in enumerate(methods):
+        for t_start, duration, label in _health_segments(t, health_by_method[method]):
+            color = _HEALTH_COLORS.get(label, "#1f77b4")
+            ax.broken_barh([(t_start, max(duration, 1e-9))], (row - 0.35, 0.7), facecolors=color)
+
+
+def _style_status_axes(ax, t: np.ndarray, methods: list[str], heading: str) -> None:
+    ax.set_yticks(range(len(methods)))
+    ax.set_yticklabels(methods)
+    ax.set_xlabel("Time [s]")
+    ax.set_xlim(float(t[0]), float(t[-1]) if len(t) > 1 else float(t[0]) + 1.0)
+    ax.grid(True, axis="x", linestyle=":", alpha=0.6)
+    ax.set_title(heading)
+    handles = [plt.Rectangle((0, 0), 1, 1, facecolor=color) for color in _HEALTH_COLORS.values()]
+    ax.legend(handles, list(_HEALTH_COLORS), loc="upper right", ncol=4, fontsize=8)
+
+
+def write_backend_status_timeline_plot(
+    health_by_method: dict[str, np.ndarray],
+    timestamps: np.ndarray,
+    output_path: str | Path,
+    sequence: str | None = None,
+    title: str | None = None,
+) -> None:
+    """Plot per-backend health status bands (OK/DEGRADED/LOST/INVALID) over time."""
+    if not health_by_method:
+        raise PlottingError("At least one backend health series is required for the status timeline")
+    t = np.asarray(timestamps, dtype=np.float64)
+    if len(t) == 0:
+        raise PlottingError("Status timeline requires a non-empty time grid")
+
+    png_path, svg_path = _plot_output_paths(output_path)
+    methods = sorted(health_by_method)
+    fig, ax = plt.subplots(figsize=(9, 1.0 + 0.6 * len(methods)))
+    _draw_status_rows(ax, t, methods, health_by_method)
+    _style_status_axes(ax, t, methods, _title_lines("Backend Status Timeline", title, sequence))
+    fig.tight_layout()
+    _save_png_and_svg(fig, png_path, svg_path, "backend status timeline")
+
+
 def write_ensemble_weight_plot(
     ensemble: Trajectory,
     output_path: str | Path,

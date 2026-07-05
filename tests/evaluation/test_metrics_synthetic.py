@@ -235,6 +235,87 @@ def test_evaluate_trajectory_known_drift():
     np.testing.assert_allclose(res.metrics.ate_rmse, np.sqrt(np.mean([0.0, 0.1**2, 0.2**2, 0.3**2, 0.4**2])))
     assert abs(res.metrics.final_drift - 0.4) < 1e-5
     assert abs(res.metrics.cumulative_distance - 4.4) < 1e-5
+    # drift_percent = final_drift / cumulative_distance * 100 = 0.4 / 4.4 * 100
+    np.testing.assert_allclose(res.metrics.drift_percent, 0.4 / 4.4 * 100.0, atol=1e-4)
+    # Identical identity orientations mean zero heading error.
+    assert res.metrics.heading_error_mean_deg == pytest.approx(0.0, abs=1e-9)
+    assert res.metrics.heading_error_p95_deg == pytest.approx(0.0, abs=1e-9)
+
+
+def test_evaluate_trajectory_error_at_distance_markers():
+    ref_ts = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+    ref_pos = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0], [4.0, 0.0, 0.0]])
+    ref_ori = np.array([[0.0, 0.0, 0.0, 1.0]] * 5)
+    reference = Trajectory(timestamps=ref_ts, method="gt", positions=ref_pos, orientations=ref_ori)
+
+    est_pos = np.array([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [2.2, 0.0, 0.0], [3.3, 0.0, 0.0], [4.4, 0.0, 0.0]])
+    estimate = Trajectory(timestamps=ref_ts, method="imu_only", positions=est_pos, orientations=ref_ori.copy())
+
+    config = EvalConfig(alignment_policy="none", distance_markers_m=(2.0, 4.0, 100.0))
+    res = evaluate_trajectory(estimate, reference, config)
+
+    assert res.status == "OK"
+    # Cumulative estimate distances are [0, 1.1, 2.2, 3.3, 4.4]; the first pose at >= 2 m
+    # is index 2 (error 0.2) and at >= 4 m index 4 (error 0.4). 100 m is never reached.
+    assert res.metrics.error_at_distance_m["2"] == pytest.approx(0.2, abs=1e-9)
+    assert res.metrics.error_at_distance_m["4"] == pytest.approx(0.4, abs=1e-9)
+    assert res.metrics.error_at_distance_m["100"] is None
+
+
+def test_evaluate_trajectory_known_heading_error():
+    ref_ts = np.array([0.0, 1.0, 2.0, 3.0])
+    ref_pos = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]])
+    ref_ori = np.array([[0.0, 0.0, 0.0, 1.0]] * 4)
+    reference = Trajectory(timestamps=ref_ts, method="gt", positions=ref_pos, orientations=ref_ori)
+
+    # Estimate yawed by a constant +10 degrees around Z.
+    yaw_rad = np.deg2rad(10.0)
+    q = [0.0, 0.0, np.sin(yaw_rad / 2.0), np.cos(yaw_rad / 2.0)]
+    est_ori = np.array([q] * 4)
+    estimate = Trajectory(timestamps=ref_ts, method="imu_only", positions=ref_pos.copy(), orientations=est_ori)
+
+    config = EvalConfig(alignment_policy="none")
+    res = evaluate_trajectory(estimate, reference, config)
+
+    assert res.status == "OK"
+    assert res.metrics.heading_error_mean_deg == pytest.approx(10.0, abs=1e-6)
+    assert res.metrics.heading_error_p95_deg == pytest.approx(10.0, abs=1e-6)
+    assert res.metrics.drift_percent == pytest.approx(0.0, abs=1e-9)
+
+
+def test_runtime_metrics_report_real_time_factor():
+    ref_ts = np.array([0.0, 1.0, 2.0, 3.0])
+    ref_pos = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]])
+    ref_ori = np.array([[0.0, 0.0, 0.0, 1.0]] * 4)
+    reference = Trajectory(timestamps=ref_ts, method="gt", positions=ref_pos, orientations=ref_ori)
+
+    estimate = Trajectory(
+        timestamps=ref_ts,
+        method="imu_only",
+        positions=ref_pos.copy(),
+        orientations=ref_ori.copy(),
+        latency_ms=np.full(4, 250.0),
+    )
+
+    res = evaluate_trajectory(estimate, reference, EvalConfig(alignment_policy="none"))
+
+    assert res.runtime.duration_sec == pytest.approx(3.0)
+    # 4 samples x 250 ms = 1 s of processing over a 3 s sequence.
+    assert res.runtime.total_processing_time_sec == pytest.approx(1.0)
+    assert res.runtime.real_time_factor == pytest.approx(3.0)
+
+
+def test_runtime_metrics_without_latency_have_no_real_time_factor():
+    ref_ts = np.array([0.0, 1.0, 2.0])
+    ref_pos = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    ref_ori = np.array([[0.0, 0.0, 0.0, 1.0]] * 3)
+    reference = Trajectory(timestamps=ref_ts, method="gt", positions=ref_pos, orientations=ref_ori)
+    estimate = Trajectory(timestamps=ref_ts, method="imu_only", positions=ref_pos.copy(), orientations=ref_ori.copy())
+
+    res = evaluate_trajectory(estimate, reference, EvalConfig(alignment_policy="none"))
+
+    assert res.runtime.total_processing_time_sec is None
+    assert res.runtime.real_time_factor is None
 
 
 def test_evaluate_trajectory_coverage():

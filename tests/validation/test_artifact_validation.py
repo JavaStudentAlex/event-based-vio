@@ -524,3 +524,100 @@ def test_check_cross_consistency_mismatch(tmp_path):
     res = check_cross_consistency(tmp_path)
     assert not res.passed
     assert "Health count mismatch for 'OK'" in res.message
+
+
+def test_failure_notes_producer_validator_contract(tmp_path):
+    import numpy as np
+
+    from nav_benchmark.run import generate_failure_notes
+    from nav_benchmark.trajectory.models import ExportMetadata, Trajectory
+
+    # Scenario 1: Clean trajectory with zero degraded/lost intervals
+    timestamps_clean = np.array([0.0, 0.1, 0.2])
+    positions_clean = np.zeros((3, 3))
+    orientations_clean = np.zeros((3, 4))
+    orientations_clean[:, 3] = 1.0  # valid qw = 1.0
+    health_clean = np.array(["OK", "OK", "OK"], dtype=object)
+
+    trajectory_clean = Trajectory(
+        timestamps=timestamps_clean,
+        method="imu_only",
+        positions=positions_clean,
+        orientations=orientations_clean,
+        health=health_clean,
+    )
+    metadata_clean = ExportMetadata(health_counts={"OK": 3, "DEGRADED": 0, "LOST": 0, "INVALID": 0})
+
+    notes_clean = generate_failure_notes(trajectory_clean, metadata_clean)
+    assert "No degraded or lost intervals were detected." in notes_clean
+
+    # Write clean files to test validator check
+    notes_clean_path = tmp_path / "failure_notes.md"
+    notes_clean_path.write_text(notes_clean, encoding="utf-8")
+
+    manifest_path = tmp_path / "run_manifest.json"
+    manifest_clean = {
+        "method": "imu_only",
+        "dataset": "synthetic",
+        "sequence": "unit_synthetic",
+        "config": {},
+        "timestamp_policy": "seconds",
+        "gravity": [0, 0, 9.81],
+        "frames": {},
+        "units": {},
+        "alignment": {},
+        "code_version": "v1.0",
+        "status": "success",
+        "health_counts": {"OK": 3, "DEGRADED": 0, "LOST": 0, "INVALID": 0},
+    }
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest_clean, f)
+
+    res_clean = check_failure_notes(notes_clean_path)
+    assert res_clean.passed, res_clean.message
+
+    # Scenario 2: Trajectory with degraded/lost intervals
+    timestamps_degraded = np.array([0.0, 0.1, 0.2, 0.3])
+    positions_degraded = np.zeros((4, 3))
+    orientations_degraded = np.zeros((4, 4))
+    orientations_degraded[:, 3] = 1.0
+    health_degraded = np.array(["OK", "DEGRADED", "LOST", "OK"], dtype=object)
+
+    trajectory_degraded = Trajectory(
+        timestamps=timestamps_degraded,
+        method="imu_only",
+        positions=positions_degraded,
+        orientations=orientations_degraded,
+        health=health_degraded,
+    )
+    metadata_degraded = ExportMetadata(health_counts={"OK": 2, "DEGRADED": 1, "LOST": 1, "INVALID": 0})
+
+    notes_degraded = generate_failure_notes(trajectory_degraded, metadata_degraded)
+    assert "No degraded or lost intervals were detected." not in notes_degraded
+    assert "DEGRADED" in notes_degraded
+    assert "LOST" in notes_degraded
+
+    # Write degraded files to test validator check
+    notes_degraded_path = tmp_path / "failure_notes_degraded.md"
+    notes_degraded_path.write_text(notes_degraded, encoding="utf-8")
+
+    manifest_degraded_path = tmp_path / "run_manifest.json"
+    manifest_degraded = {
+        "method": "imu_only",
+        "dataset": "synthetic",
+        "sequence": "unit_synthetic",
+        "config": {},
+        "timestamp_policy": "seconds",
+        "gravity": [0, 0, 9.81],
+        "frames": {},
+        "units": {},
+        "alignment": {},
+        "code_version": "v1.0",
+        "status": "success",
+        "health_counts": {"OK": 2, "DEGRADED": 1, "LOST": 1, "INVALID": 0},
+    }
+    with open(manifest_degraded_path, "w", encoding="utf-8") as f:
+        json.dump(manifest_degraded, f)
+
+    res_degraded = check_failure_notes(notes_degraded_path)
+    assert res_degraded.passed, res_degraded.message

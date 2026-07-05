@@ -100,6 +100,46 @@ def export_project_csv(trajectory: Trajectory, path: str | Path, metadata: Expor
                 metadata.health_counts[health] += 1
 
 
+def _parse_tum_row(line: str, line_number: int) -> list[float]:
+    parts = line.split()
+    if len(parts) != 8:
+        raise ValueError(f"TUM line {line_number} has {len(parts)} fields, expected 8")
+    try:
+        return [float(part) for part in parts]
+    except ValueError as exc:
+        raise ValueError(f"TUM line {line_number} has a non-numeric field") from exc
+
+
+def read_tum_trajectory(path: str | Path, *, method: str = "external") -> Trajectory:
+    """Read a TUM trajectory file (``timestamp x y z qx qy qz qw``) into the project model.
+
+    Blank lines and ``#`` comments are skipped. Timestamps must be strictly increasing.
+    """
+    path = Path(path)
+    rows: list[list[float]] = []
+    with open(path, encoding="utf-8") as f:
+        for line_number, raw_line in enumerate(f, start=1):
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            rows.append(_parse_tum_row(line, line_number))
+
+    if not rows:
+        raise ValueError(f"TUM trajectory {path} contains no pose rows")
+
+    values = np.asarray(rows, dtype=np.float64)
+    timestamps = values[:, 0]
+    if np.any(np.diff(timestamps) <= 0.0):
+        raise ValueError(f"TUM trajectory {path} timestamps are not strictly increasing")
+
+    return Trajectory(
+        timestamps=timestamps,
+        method=method,
+        positions=values[:, 1:4],
+        orientations=values[:, 4:8],
+    )
+
+
 def export_tum(trajectory: Trajectory, path: str | Path, metadata: ExportMetadata | None = None) -> int:
     """
     Exports a trajectory to the TUM format: timestamp x y z qx qy qz qw

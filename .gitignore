@@ -64,8 +64,28 @@ dummy_output
 # ── GSD baseline (auto-generated) ──
 .gsd-worktrees/
 .mypy_cache
-milestone_1_event_imu_vio.md
 .claude
 runs
 tmp_runs
-slam_ensemble_implementation_task.md
+
+# ── GSD baseline (auto-generated) ──
+.gsd-backups/
+.gsd/activity/
+.gsd/audit/
+.gsd/forensics/
+.gsd/runtime/
+.gsd/worktrees/
+.gsd/parallel/
+.gsd/auto.lock
+.gsd/metrics.json
+.gsd/completed-units*.json
+.gsd/state-manifest.json
+.gsd/STATE.md
+.gsd/gsd.db*
+.gsd/journal/
+.gsd/doctor-history.jsonl
+.gsd/event-log.jsonl
+.gsd/DISCUSSION-MANIFEST.json
+.gsd/milestones/**/*-CONTINUE.md
+.gsd/milestones/**/continue.md
+waypoint-images

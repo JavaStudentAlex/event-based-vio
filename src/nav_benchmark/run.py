@@ -1,6 +1,7 @@
 import argparse
 import csv
 import json
+import resource
 import sys
 import time
 from pathlib import Path
@@ -9,6 +10,13 @@ from typing import Any, NoReturn
 import numpy as np
 
 from nav_benchmark.baselines.event_imu import EventImuBackend, EventImuConfig
+from nav_benchmark.baselines.external import (
+    ExternalToolBackend,
+    ExternalToolConfig,
+    ExternalToolError,
+    ExternalTrajectoryBackend,
+    ExternalTrajectoryConfig,
+)
 from nav_benchmark.baselines.image_imu import ImageImuBackend, ImageImuConfig
 from nav_benchmark.baselines.imu import ImuOnlyBackend, ImuOnlyConfig
 from nav_benchmark.baselines.multimodal_vio import MultimodalVioBackend, MultimodalVioConfig
@@ -23,6 +31,14 @@ from nav_benchmark.datasets.mvsec import (
 )
 from nav_benchmark.datasets.synthetic import load_synthetic_sequence
 from nav_benchmark.ensemble.confidence_weighted import EnsembleConfig, fuse_trajectories, write_weight_log_csv
+from nav_benchmark.ensemble.fusion import (
+    EkfFusionConfig,
+    WinnerTakesHealthyConfig,
+    run_weighted_ekf_fusion,
+    run_winner_takes_healthy,
+    sample_backend_health,
+    write_update_log_csv,
+)
 from nav_benchmark.evaluation.harness import (
     evaluate_run_directory,
     load_ground_truth_trajectory,
@@ -33,7 +49,13 @@ from nav_benchmark.evaluation.metrics import (
     EvalConfig,
     make_json_serializable,
 )
-from nav_benchmark.evaluation.plots import write_ensemble_weight_plot
+from nav_benchmark.evaluation.plots import write_backend_status_timeline_plot, write_ensemble_weight_plot
+from nav_benchmark.events import (
+    EventStreamDiagnostics,
+    diagnose_event_stream,
+    ensure_event_frames,
+    infer_sequence_resolution,
+)
 from nav_benchmark.trajectory.export import export_project_csv, export_tum
 from nav_benchmark.trajectory.models import ExportMetadata, Trajectory
 from nav_benchmark.validation import validate_run_directory
@@ -65,6 +87,17 @@ def _pyproject_code_version() -> str | None:
     return None
 
 
+def process_resource_usage() -> dict[str, float]:
+    """CPU time and peak memory of this process, for reproducibility metadata."""
+    usage = resource.getrusage(resource.RUSAGE_SELF)
+    return {
+        "cpu_user_sec": float(usage.ru_utime),
+        "cpu_system_sec": float(usage.ru_stime),
+        # ru_maxrss is kilobytes on Linux.
+        "max_rss_mb": float(usage.ru_maxrss) / 1024.0,
+    }
+
+
 def _health_intervals(trajectory: Trajectory) -> list[tuple[str, float, float]]:
     intervals = []
     if trajectory.health is not None and len(trajectory.health) > 0:
@@ -85,7 +118,7 @@ def _health_intervals(trajectory: Trajectory) -> list[tuple[str, float, float]]:
 def _intervals_text(intervals: list[tuple[str, float, float]]) -> str:
     degraded_lost_intervals = [item for item in intervals if item[0] in ("DEGRADED", "LOST")]
     if not degraded_lost_intervals:
-        return "No degraded or lost intervals were detected during this run."
+        return "No degraded or lost intervals were detected."
     lines = []
     for state, t_start, t_end in degraded_lost_intervals:
         duration = t_end - t_start
@@ -127,11 +160,36 @@ def generate_failure_notes(trajectory: Trajectory, metadata: ExportMetadata) -> 
 """
 
 
+def _event_window_sec(args) -> float:
+    window_ms = float(getattr(args, "event_window_ms", 50.0))
+    if window_ms <= 0.0:
+        raise ValueError("--event-window-ms must be positive")
+    return window_ms / 1000.0
+
+
+def _prepare_event_streams(sequence: MvsecSequence, args, log_message) -> MvsecSequence:
+    if ensure_event_frames(sequence, window_sec=_event_window_sec(args)):
+        frame_count = len(sequence.event_frames) if sequence.event_frames is not None else 0
+        log_message(
+            f"Built {frame_count} event frames from raw events (window {getattr(args, 'event_window_ms', 50.0)} ms)"
+        )
+    return sequence
+
+
+def sequence_event_diagnostics(sequence: MvsecSequence, *, window_sec: float) -> EventStreamDiagnostics | None:
+    """Diagnose raw event stream health, or None when the sequence carries no events."""
+    if sequence.events is None or len(sequence.events) == 0:
+        return None
+    height, width = infer_sequence_resolution(sequence)
+    return diagnose_event_stream(sequence.events, height, width, window_sec=window_sec)
+
+
 def load_dataset_sequence(args, log_message) -> MvsecSequence:
     if args.dataset == "synthetic":
         if args.input:
             log_message(f"Loading generated synthetic sequence from {args.input}...")
-            return load_synthetic_sequence(args.input, sequence_name=args.sequence)
+            sequence = load_synthetic_sequence(args.input, sequence_name=args.sequence)
+            return _prepare_event_streams(sequence, args, log_message)
 
         log_message("Generating synthetic sequence data...")
         N = 100
@@ -155,7 +213,8 @@ def load_dataset_sequence(args, log_message) -> MvsecSequence:
         )
     else:
         log_message(f"Loading MVSEC sequence from {args.input}...")
-        return load_mvsec_sequence(args.input)
+        sequence = load_mvsec_sequence(args.input)
+        return _prepare_event_streams(sequence, args, log_message)
 
 
 def _initial_velocity_from_ground_truth(sequence: MvsecSequence) -> np.ndarray:
@@ -231,9 +290,11 @@ def _run_event_vo(args, sequence: MvsecSequence, run_dir: Path | None):
 def _run_event_imu(args, sequence: MvsecSequence, run_dir: Path | None):
     config = EventImuConfig(
         imu_config=_imu_only_config_for_sequence(args, sequence),
-        event_vo_config=_event_vo_config(run_dir),
+        event_window_sec=_event_window_sec(args),
     )
-    return _run_backend(EventImuBackend(), sequence, config)
+    result = EventImuBackend().run_result(sequence, config=config)
+    config.run_diagnostics = result.diagnostics
+    return result.trajectory, config
 
 
 def _run_image_imu(args, sequence: MvsecSequence, run_dir: Path | None):
@@ -253,14 +314,33 @@ def _run_multimodal_vio(args, sequence: MvsecSequence, run_dir: Path | None):
     return _run_backend(MultimodalVioBackend(), sequence, config)
 
 
-def _run_ensemble(args, sequence: MvsecSequence, run_dir: Path | None):
+def _run_external(args, sequence: MvsecSequence, run_dir: Path | None):
+    command = getattr(args, "external_command", None)
+    if command:
+        tool_config = ExternalToolConfig(
+            command=command,
+            trajectory_path=getattr(args, "external_trajectory", "") or "",
+            format=getattr(args, "external_format", "auto"),
+            workdir=getattr(args, "external_workdir", None),
+            timeout_sec=getattr(args, "external_timeout_sec", 3600.0),
+            tool_name=getattr(args, "external_tool_name", "external"),
+            version_command=getattr(args, "external_version_command", None),
+        )
+        return _run_backend(ExternalToolBackend(), sequence, tool_config)
+    config = ExternalTrajectoryConfig(
+        trajectory_path=getattr(args, "external_trajectory", "") or "",
+        format=getattr(args, "external_format", "auto"),
+    )
+    return _run_backend(ExternalTrajectoryBackend(), sequence, config)
+
+
+def _ensemble_baselines(args, sequence: MvsecSequence, run_dir: Path | None, imu_config: ImuOnlyConfig):
     baseline_trajectories = {}
-    imu_config = _imu_only_config_for_sequence(args, sequence)
     baseline_trajectories["imu_only"] = ImuOnlyBackend().run(sequence, config=imu_config)
     baseline_trajectories["rgb_vo"] = RgbVoBackend().run(sequence, config=_rgb_vo_config(run_dir))
     baseline_trajectories["event_vo"] = EventVoBackend().run(sequence, config=_event_vo_config(run_dir))
 
-    event_imu_config = EventImuConfig(imu_config=imu_config, event_vo_config=_event_vo_config(run_dir))
+    event_imu_config = EventImuConfig(imu_config=imu_config, event_window_sec=_event_window_sec(args))
     image_imu_config = ImageImuConfig(imu_config=imu_config, rgb_vo_config=_rgb_vo_config(run_dir))
     multimodal_vio_config = MultimodalVioConfig(
         imu_config=imu_config,
@@ -271,15 +351,74 @@ def _run_ensemble(args, sequence: MvsecSequence, run_dir: Path | None):
     baseline_trajectories["image_imu"] = ImageImuBackend().run(sequence, config=image_imu_config)
     baseline_trajectories["multimodal_vio"] = MultimodalVioBackend().run(sequence, config=multimodal_vio_config)
 
-    config = EnsembleConfig()
-    trajectory = fuse_trajectories(baseline_trajectories, config=config)
-    return trajectory, {
-        "ensemble": config,
-        "input_methods": sorted(baseline_trajectories),
+    baseline_configs = {
         "imu_config": imu_config,
         "event_imu_config": event_imu_config,
         "image_imu_config": image_imu_config,
         "multimodal_vio_config": multimodal_vio_config,
+    }
+    return baseline_trajectories, baseline_configs
+
+
+def _require_sequence_imu(sequence: MvsecSequence) -> np.ndarray:
+    if sequence.imu is None or len(sequence.imu) == 0:
+        raise ValueError("Weighted EKF ensemble fusion requires IMU data in the sequence")
+    return sequence.imu
+
+
+def _run_ekf_ensemble(sequence: MvsecSequence, baselines: dict, imu_config: ImuOnlyConfig, run_dir: Path | None):
+    from nav_benchmark.ensemble.ekf import EkfConfig
+
+    imu = _require_sequence_imu(sequence)
+    measurements = {method: trajectory for method, trajectory in baselines.items() if method != "imu_only"}
+    fusion_config = EkfFusionConfig(ekf=EkfConfig(gravity=imu_config.gravity))
+    trajectory, records = run_weighted_ekf_fusion(
+        imu,
+        measurements,
+        config=fusion_config,
+        initial_position=imu_config.initial_position,
+        initial_velocity=imu_config.initial_velocity,
+        initial_orientation_xyzw=imu_config.initial_orientation,
+    )
+    if run_dir is not None:
+        write_update_log_csv(records, run_dir / "ensemble_updates.csv")
+        write_update_log_csv(records, run_dir / "rejected_updates.csv", only_rejected=True)
+    return trajectory, fusion_config
+
+
+def _write_status_timeline(args, baselines: dict, trajectory: Trajectory, run_dir: Path | None) -> None:
+    if run_dir is None:
+        return
+    try:
+        health_by_method = sample_backend_health(baselines, trajectory.timestamps)
+        write_backend_status_timeline_plot(
+            health_by_method, trajectory.timestamps, run_dir / "backend_status_timeline", sequence=args.sequence
+        )
+    except Exception as plot_err:
+        print(f"Warning: failed to write backend status timeline: {plot_err}", file=sys.stderr)
+
+
+def _fuse_ensemble(args, sequence: MvsecSequence, baselines: dict, imu_config: ImuOnlyConfig, run_dir: Path | None):
+    fusion_mode = getattr(args, "fusion", "confidence_weighted")
+    if fusion_mode == "weighted_ekf":
+        return _run_ekf_ensemble(sequence, baselines, imu_config, run_dir)
+    if fusion_mode == "winner_takes_healthy":
+        wth_config = WinnerTakesHealthyConfig()
+        return run_winner_takes_healthy(baselines, config=wth_config), wth_config
+    return fuse_trajectories(baselines, config=EnsembleConfig()), EnsembleConfig()
+
+
+def _run_ensemble(args, sequence: MvsecSequence, run_dir: Path | None):
+    imu_config = _imu_only_config_for_sequence(args, sequence)
+    baselines, baseline_configs = _ensemble_baselines(args, sequence, run_dir, imu_config)
+    trajectory, fusion_config = _fuse_ensemble(args, sequence, baselines, imu_config, run_dir)
+    _write_status_timeline(args, baselines, trajectory, run_dir)
+
+    return trajectory, {
+        "fusion_mode": getattr(args, "fusion", "confidence_weighted"),
+        "ensemble": fusion_config,
+        "input_methods": sorted(baselines),
+        **baseline_configs,
     }
 
 
@@ -291,6 +430,7 @@ _ESTIMATOR_RUNNERS = {
     "image_imu": _run_image_imu,
     "multimodal_vio": _run_multimodal_vio,
     "ensemble": _run_ensemble,
+    "external": _run_external,
 }
 
 
@@ -301,7 +441,9 @@ def run_estimator(args, sequence, run_dir: Path | None = None):
     return runner(args, sequence, run_dir)
 
 
-def write_run_manifest(args, config, metadata, run_dir) -> dict:
+def write_run_manifest(
+    args, config, metadata, run_dir, *, event_diagnostics: EventStreamDiagnostics | None = None
+) -> dict:
     from nav_benchmark.trajectory.models import PoseHealth
 
     health_counts = {h.value: metadata.health_counts.get(h.value, 0) for h in PoseHealth}
@@ -331,6 +473,9 @@ def write_run_manifest(args, config, metadata, run_dir) -> dict:
         "status": "success",
         "health_counts": health_counts,
     }
+    if event_diagnostics is not None:
+        run_manifest["event_diagnostics"] = make_json_serializable(event_diagnostics)
+    run_manifest["resource_usage"] = process_resource_usage()
 
     manifest_path = run_dir / "run_manifest.json"
     with open(manifest_path, "w") as f:
@@ -477,7 +622,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--method",
         required=True,
-        choices=["imu_only", "rgb_vo", "event_vo", "event_imu", "image_imu", "multimodal_vio", "ensemble"],
+        choices=["imu_only", "rgb_vo", "event_vo", "event_imu", "image_imu", "multimodal_vio", "ensemble", "external"],
         help="Estimation method to run",
     )
     run_parser.add_argument(
@@ -504,6 +649,63 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--resume",
         action="store_true",
         help="If the target run directory exists, append a suffix like -r{N} to avoid error",
+    )
+    run_parser.add_argument(
+        "--event-window-ms",
+        type=float,
+        default=50.0,
+        help="Window length in milliseconds for event frames built from raw events and event diagnostics",
+    )
+    run_parser.add_argument(
+        "--fusion",
+        choices=["confidence_weighted", "weighted_ekf", "winner_takes_healthy"],
+        default="confidence_weighted",
+        help="Fusion mode used when --method is 'ensemble'",
+    )
+    run_parser.add_argument(
+        "--external-trajectory",
+        help="Path to an externally produced trajectory (TUM or project CSV); required for --method external",
+    )
+    run_parser.add_argument(
+        "--external-format",
+        choices=["auto", "tum", "csv"],
+        default="auto",
+        help="Format of the external trajectory file",
+    )
+    run_parser.add_argument(
+        "--external-command",
+        help=(
+            "Command that runs the external tool (executed via subprocess); the tool must write "
+            "the trajectory file given by --external-trajectory"
+        ),
+    )
+    run_parser.add_argument(
+        "--external-workdir",
+        help="Working directory for --external-command",
+    )
+    run_parser.add_argument(
+        "--external-timeout-sec",
+        type=float,
+        default=3600.0,
+        help="Timeout in seconds for --external-command",
+    )
+    run_parser.add_argument(
+        "--external-tool-name",
+        default="external",
+        help="Human-readable external tool name recorded in the run manifest",
+    )
+    run_parser.add_argument(
+        "--external-version-command",
+        help="Command whose first output line is recorded as the external tool version",
+    )
+    run_parser.add_argument(
+        "--evaluate",
+        action="store_true",
+        help="After a successful run, evaluate against ground truth and write evaluation artifacts",
+    )
+    run_parser.add_argument(
+        "--ground-truth",
+        help="Ground truth trajectory path used with --evaluate (defaults to the run input's ground truth)",
     )
 
     # Subcommand 'eval'
@@ -557,6 +759,52 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=["se3", "none"],
         default="se3",
         help="Alignment policy",
+    )
+
+    # Subcommand 'compare'
+    compare_parser = subparsers.add_parser("compare", help="Compare metrics across evaluated run directories")
+    compare_parser.add_argument(
+        "--run-dirs",
+        nargs="+",
+        required=True,
+        help="Two or more evaluated run directories to compare",
+    )
+    compare_parser.add_argument(
+        "--output",
+        required=True,
+        help="Directory where comparison artifacts are written",
+    )
+
+    # Subcommand 'convert'
+    convert_parser = subparsers.add_parser(
+        "convert",
+        help="Export a sequence's streams to a plain layout for external baseline adapters",
+    )
+    convert_parser.add_argument(
+        "--dataset",
+        required=True,
+        choices=["synthetic", "mvsec"],
+        help="Dataset type",
+    )
+    convert_parser.add_argument(
+        "--sequence",
+        required=True,
+        help="Name of the sequence to convert",
+    )
+    convert_parser.add_argument(
+        "--input",
+        help="Path to the input dataset (required for mvsec dataset)",
+    )
+    convert_parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Directory where the converted streams are written",
+    )
+    convert_parser.add_argument(
+        "--event-window-ms",
+        type=float,
+        default=50.0,
+        help="Window length in milliseconds used when event frames are built from raw events",
     )
 
     # Subcommand 'validate'
@@ -638,10 +886,23 @@ def _export_ensemble_artifacts(args, trajectory: Trajectory, run_dir: Path, log_
         log_message(f"WARNING: failed to write ensemble weight plot: {plot_err}")
 
 
-def _export_run_artifacts(args, trajectory: Trajectory, config, run_dir: Path, log_message) -> None:
+def _export_run_artifacts(
+    args,
+    trajectory: Trajectory,
+    config,
+    run_dir: Path,
+    log_message,
+    *,
+    event_diagnostics: EventStreamDiagnostics | None = None,
+) -> None:
     csv_path = run_dir / "estimated_trajectory.csv"
     tum_path = run_dir / "estimated_trajectory_tum.txt"
-    source_frame = "camera" if args.method in {"rgb_vo", "event_vo"} else "imu"
+    if args.method in {"rgb_vo", "event_vo"}:
+        source_frame = "camera"
+    elif args.method == "external":
+        source_frame = "external"
+    else:
+        source_frame = "imu"
     metadata = ExportMetadata(source_frame=source_frame, target_frame="world")
 
     export_project_csv(trajectory, csv_path, metadata)
@@ -652,37 +913,97 @@ def _export_run_artifacts(args, trajectory: Trajectory, config, run_dir: Path, l
 
     manifest_path = run_dir / "run_manifest.json"
     failure_notes_path = run_dir / "failure_notes.md"
-    write_run_manifest(args, config, metadata, run_dir)
+    write_run_manifest(args, config, metadata, run_dir, event_diagnostics=event_diagnostics)
     failure_notes_path.write_text(generate_failure_notes(trajectory, metadata), encoding="utf-8")
     log_message(f"Exported run manifest to {manifest_path}")
     log_message(f"Exported failure notes to {failure_notes_path}")
 
 
-def _handle_run_command(args, parser: argparse.ArgumentParser) -> None:
+def _log_event_stream_health(event_diagnostics: EventStreamDiagnostics | None, log_message) -> None:
+    if event_diagnostics is None:
+        return
+    if event_diagnostics.starved or event_diagnostics.overloaded:
+        log_message(
+            "WARNING: event stream health: "
+            f"starved_windows={event_diagnostics.starved_window_count}, "
+            f"overloaded_windows={event_diagnostics.overloaded_window_count}"
+        )
+
+
+def _validate_run_args(args, parser: argparse.ArgumentParser) -> None:
     if args.dataset == "mvsec" and not args.input:
         parser.error("--input is required when --dataset is 'mvsec'")
+    if args.method == "external" and not args.external_trajectory:
+        parser.error("--external-trajectory is required when --method is 'external'")
+
+
+def _execute_run(args, run_dir: Path, log_message) -> None:
+    sequence = load_dataset_sequence(args, log_message)
+    event_diagnostics = sequence_event_diagnostics(sequence, window_sec=_event_window_sec(args))
+    _log_event_stream_health(event_diagnostics, log_message)
+    log_message("Running baseline estimator...")
+    trajectory, config = run_estimator(args, sequence, run_dir=run_dir)
+    log_message("Exporting trajectory artifacts...")
+    _export_run_artifacts(args, trajectory, config, run_dir, log_message, event_diagnostics=event_diagnostics)
+    log_message("[FINISHED] Run completed successfully.")
+
+
+def _write_failed_run_artifacts(args, run_dir: Path, error: Exception) -> None:
+    """Keep a failed run diagnosable: manifest with failure status plus failure notes."""
+    manifest: dict[str, Any] = {
+        "method": args.method,
+        "dataset": args.dataset,
+        "sequence": args.sequence,
+        "input": getattr(args, "input", None),
+        "code_version": get_code_version(),
+        "status": "failed",
+        "error_message": str(error),
+    }
+    if isinstance(error, ExternalToolError):
+        manifest["external_execution"] = make_json_serializable(error.execution)
+    with open(run_dir / "run_manifest.json", "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=4)
+
+    notes = f"""# Run Failure Notes
+
+## Run Failed
+
+- **Method**: {args.method}
+- **Sequence**: {args.sequence}
+- **Error**: {error}
+
+See run.log for the full execution log.
+"""
+    (run_dir / "failure_notes.md").write_text(notes, encoding="utf-8")
+
+
+def _handle_run_command(args, parser: argparse.ArgumentParser) -> None:
+    _validate_run_args(args, parser)
 
     run_dir = _create_run_dir(args)
     log_message = _run_logger(run_dir / "run.log")
     log_message(f"[START] Method: {args.method}, Dataset: {args.dataset}, Sequence: {args.sequence}")
     try:
-        sequence = load_dataset_sequence(args, log_message)
-        log_message("Running baseline estimator...")
-        trajectory, config = run_estimator(args, sequence, run_dir=run_dir)
-        log_message("Exporting trajectory artifacts...")
-        _export_run_artifacts(args, trajectory, config, run_dir, log_message)
-        log_message("[FINISHED] Run completed successfully.")
+        _execute_run(args, run_dir, log_message)
     except Exception as e:
         log_message(f"[FAILED] Run failed with error: {e}")
+        try:
+            _write_failed_run_artifacts(args, run_dir, e)
+        except Exception as write_err:
+            log_message(f"WARNING: failed to write failure artifacts: {write_err}")
         raise
+    if getattr(args, "evaluate", False):
+        log_message("Evaluating run against ground truth...")
+        _evaluate_run_dir(args, run_dir)
+        log_message(f"Evaluation artifacts written to {run_dir}")
 
 
 def _eval_config_from_args(args) -> EvalConfig:
     return EvalConfig(
-        association_tolerance_sec=args.association_tolerance_sec,
-        alignment_policy=args.alignment_policy,
-        rpe_delta_m=args.rpe_delta_m,
-        drift_bin_width_m=args.drift_bin_width_m,
+        association_tolerance_sec=getattr(args, "association_tolerance_sec", 0.1),
+        alignment_policy=getattr(args, "alignment_policy", "se3"),
+        rpe_delta_m=getattr(args, "rpe_delta_m", 1.0),
+        drift_bin_width_m=getattr(args, "drift_bin_width_m", 20.0),
     )
 
 
@@ -804,8 +1125,7 @@ def _write_eval_artifacts_or_fail(args, run_dir: Path, ground_truth: Trajectory,
         _fail_eval(run_dir, f"Failed to write evaluation artifacts: {e}", eval_cfg)
 
 
-def _handle_eval_command(args, parser: argparse.ArgumentParser) -> None:
-    run_dir = _resolve_command_run_dir(args, parser, "evaluation")
+def _evaluate_run_dir(args, run_dir: Path) -> None:
     eval_cfg = _eval_config_from_args(args)
     est_traj_path = run_dir / "estimated_trajectory.csv"
     if not est_traj_path.exists():
@@ -813,6 +1133,11 @@ def _handle_eval_command(args, parser: argparse.ArgumentParser) -> None:
     gt_path, ground_truth = _load_eval_ground_truth(args, run_dir, eval_cfg)
     result = _evaluate_or_fail(args, run_dir, gt_path, ground_truth, eval_cfg)
     _write_eval_artifacts_or_fail(args, run_dir, ground_truth, result, eval_cfg)
+
+
+def _handle_eval_command(args, parser: argparse.ArgumentParser) -> None:
+    run_dir = _resolve_command_run_dir(args, parser, "evaluation")
+    _evaluate_run_dir(args, run_dir)
     print(f"Evaluation completed successfully. Artifacts written to {run_dir}")
 
 
@@ -835,6 +1160,39 @@ def _handle_validate_command(args, parser: argparse.ArgumentParser) -> None:
         sys.exit(1)
 
 
+def _handle_compare_command(args, parser: argparse.ArgumentParser) -> None:
+    from nav_benchmark.reporting.compare import compare_runs, write_comparison_artifacts
+
+    try:
+        summaries = compare_runs([Path(run_dir) for run_dir in args.run_dirs])
+        artifact_paths = write_comparison_artifacts(summaries, Path(args.output))
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Comparison failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Compared {len(summaries)} runs. Ranking by drift percent:")
+    for rank, summary in enumerate(summaries, start=1):
+        drift = "n/a" if summary.drift_percent is None else f"{summary.drift_percent:.3f}%"
+        print(f"  {rank}. {summary.method} ({summary.sequence}): drift={drift}")
+    for name, path in artifact_paths.items():
+        print(f"Wrote {name}: {path}")
+
+
+def _handle_convert_command(args, parser: argparse.ArgumentParser) -> None:
+    from nav_benchmark.datasets.convert import export_sequence_streams
+
+    if args.dataset == "mvsec" and not args.input:
+        parser.error("--input is required when --dataset is 'mvsec'")
+
+    def log_message(msg: str) -> None:
+        print(msg)
+
+    sequence = load_dataset_sequence(args, log_message)
+    manifest = export_sequence_streams(sequence, Path(args.output_dir))
+    stream_names = ", ".join(sorted(manifest["streams"])) or "none"
+    print(f"Converted sequence '{args.sequence}' to {args.output_dir} (streams: {stream_names})")
+
+
 def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
@@ -842,6 +1200,8 @@ def main() -> None:
         "run": _handle_run_command,
         "eval": _handle_eval_command,
         "validate": _handle_validate_command,
+        "compare": _handle_compare_command,
+        "convert": _handle_convert_command,
     }
     handlers[args.command](args, parser)
 

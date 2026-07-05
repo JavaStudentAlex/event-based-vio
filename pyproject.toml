@@ -107,6 +107,8 @@ do_not_mutate = [
   "./skills/*",
   "mutants/*",
   "./mutants/*",
+  "tools/*",
+  "./tools/*",
 ]
 pytest_add_cli_args_test_selection = ["tests"]
 
