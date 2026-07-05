@@ -2,11 +2,9 @@
 
 This file is the explicit capability and coverage contract for the project.
 
-Use it to track what is actively in scope, what has been validated by completed work, what is intentionally deferred, and what is explicitly out of scope.
-
 ## Active
 
-### R001 — MVSEC sensor ingestion
+### R001 — The system can load MVSEC event camera, IMU, calibration, ground-truth trajectory, and timestamp data from local dataset files.
 - Class: core-capability
 - Status: active
 - Description: The system can load MVSEC event camera, IMU, calibration, ground-truth trajectory, and timestamp data from local dataset files.
@@ -17,7 +15,7 @@ Use it to track what is actively in scope, what has been validated by completed 
 - Validation: mapped
 - Notes: First target sequence is `outdoor_day1`; `indoor_flying1` is the easier debug fallback.
 
-### R002 — Timestamp synchronization and calibration handling
+### R002 — Event, IMU, and ground-truth streams are timestamp-validated and synchronized with explicit calibration/frame assumptions.
 - Class: core-capability
 - Status: active
 - Description: Event, IMU, and ground-truth streams are timestamp-validated and synchronized with explicit calibration/frame assumptions.
@@ -28,7 +26,7 @@ Use it to track what is actively in scope, what has been validated by completed 
 - Validation: mapped
 - Notes: Timestamp units, frame assumptions, and sync tolerance must be recorded.
 
-### R003 — Standard trajectory contract
+### R003 — Every method exports the project CSV trajectory schema and a TUM-compatible trajectory file.
 - Class: integration
 - Status: active
 - Description: Every method exports the project CSV trajectory schema and a TUM-compatible trajectory file.
@@ -39,7 +37,7 @@ Use it to track what is actively in scope, what has been validated by completed 
 - Validation: mapped
 - Notes: Required CSV columns are `timestamp,method,x,y,z,qx,qy,qz,qw,vx,vy,vz,confidence,health,latency_ms`.
 
-### R004 — IMU-only dead reckoning sanity baseline
+### R004 — The benchmark can run an `imu_only` dead reckoning baseline that produces an estimated relative trajectory.
 - Class: primary-user-loop
 - Status: active
 - Description: The benchmark can run an `imu_only` dead reckoning baseline that produces an estimated relative trajectory.
@@ -50,7 +48,7 @@ Use it to track what is actively in scope, what has been validated by completed 
 - Validation: mapped
 - Notes: The baseline is expected to drift; accuracy is not the proof target.
 
-### R005 — Ground-truth trajectory alignment and drift evaluation
+### R005 — The evaluator aligns estimated trajectories to ground truth with an explicit SE3 policy and computes trajectory error metrics.
 - Class: core-capability
 - Status: active
 - Description: The evaluator aligns estimated trajectories to ground truth with an explicit SE3 policy and computes trajectory error metrics.
@@ -61,7 +59,7 @@ Use it to track what is actively in scope, what has been validated by completed 
 - Validation: mapped
 - Notes: Metrics include ATE, RPE, final drift, position error over time, and distance-binned drift.
 
-### R006 — Drift growth versus distance artifacts
+### R006 — The benchmark produces explicit error-versus-distance and drift-over-distance outputs, including distance bins such as every 20 meters.
 - Class: differentiator
 - Status: active
 - Description: The benchmark produces explicit error-versus-distance and drift-over-distance outputs, including distance bins such as every 20 meters.
@@ -72,7 +70,7 @@ Use it to track what is actively in scope, what has been validated by completed 
 - Validation: mapped
 - Notes: This is drift-measured, not a claim of drift-bounded navigation.
 
-### R007 — One-command benchmark entrypoint
+### R007 — A CLI command loads a sequence, runs a selected method, exports trajectories, evaluates against ground truth, and writes run artifacts.
 - Class: primary-user-loop
 - Status: active
 - Description: A CLI command loads a sequence, runs a selected method, exports trajectories, evaluates against ground truth, and writes run artifacts.
@@ -83,7 +81,7 @@ Use it to track what is actively in scope, what has been validated by completed 
 - Validation: mapped
 - Notes: Planned entrypoint is `python -m nav_benchmark.run`.
 
-### R008 — Run manifest and reproducibility metadata
+### R008 — Each run writes `run_manifest.json` with method, dataset/sequence, config, timestamp policy, alignment policy, frames, units, code version if available, and run status.
 - Class: operability
 - Status: active
 - Description: Each run writes `run_manifest.json` with method, dataset/sequence, config, timestamp policy, alignment policy, frames, units, code version if available, and run status.
@@ -94,7 +92,7 @@ Use it to track what is actively in scope, what has been validated by completed 
 - Validation: mapped
 - Notes: Manifest is required for successful and failed/degraded runs.
 
-### R009 — Failure visibility and invalid interval preservation
+### R009 — Invalid/degraded intervals are explicitly recorded in benchmark artifacts and `failure_notes.md` is always present.
 - Class: failure-visibility
 - Status: active
 - Description: Invalid/degraded intervals are explicitly recorded in benchmark artifacts and `failure_notes.md` is always present.
@@ -105,7 +103,7 @@ Use it to track what is actively in scope, what has been validated by completed 
 - Validation: mapped
 - Notes: Successful runs may state `No degraded or failed intervals detected.`
 
-### R010 — CI-friendly synthetic smoke tests
+### R010 — Fast synthetic tests verify loading, synchronization, trajectory export, metric calculation, plots, and CLI smoke behavior without MVSEC downloads.
 - Class: quality-attribute
 - Status: active
 - Description: Fast synthetic tests verify loading, synchronization, trajectory export, metric calculation, plots, and CLI smoke behavior without MVSEC downloads.
@@ -116,7 +114,7 @@ Use it to track what is actively in scope, what has been validated by completed 
 - Validation: mapped
 - Notes: Full MVSEC checks are documented/manual or separately marked dataset checks.
 
-### R011 — Stable odometry backend interface
+### R011 — M001 defines a minimal backend interface that returns trajectory, health/failure intervals, latency/runtime stats where available, and assumptions metadata.
 - Class: integration
 - Status: active
 - Description: M001 defines a minimal backend interface that returns trajectory, health/failure intervals, latency/runtime stats where available, and assumptions metadata.
@@ -127,29 +125,29 @@ Use it to track what is actively in scope, what has been validated by completed 
 - Validation: mapped
 - Notes: Avoid overbuilding a plugin system before external wrappers exist.
 
-### R012 — First Event+IMU relative odometry backend
+### R012 — Add a simple but real Event+IMU relative odometry backend that uses event packets, event frames, or time surfaces with IMU propagation/correction.
 - Class: core-capability
 - Status: active
 - Description: Add a simple but real Event+IMU relative odometry backend that uses event packets, event frames, or time surfaces with IMU propagation/correction.
 - Why it matters: This is the first required event-camera GPS-denied odometry capability.
 - Source: user
-- Primary owning slice: M002/provisional
-- Supporting slices: M001-ncx5an/S03, M001-ncx5an/S04
-- Validation: unmapped
-- Notes: M002 owns detailed planning.
+- Primary owning slice: M002/S03
+- Supporting slices: M002/S01
+- Validation: mapped
+- Notes: Backend code exists from M001. M002 validates correctness (S01 extrinsics hardening) and produces a benchmark comparison proving event_imu improves over imu_only (S03).
 
-### R013 — Shared artifact schema across methods
+### R013 — `event_imu` and later methods must produce the same artifact set and schema as `imu_only`.
 - Class: integration
 - Status: active
 - Description: `event_imu` and later methods must produce the same artifact set and schema as `imu_only`.
 - Why it matters: Comparisons are only meaningful if method outputs are structurally identical.
 - Source: user
-- Primary owning slice: M002/provisional
-- Supporting slices: M001-ncx5an/S02, M001-ncx5an/S05
-- Validation: unmapped
-- Notes: M001 establishes the artifact contract; M002 proves reuse.
+- Primary owning slice: M002/S02
+- Supporting slices: M002/S01
+- Validation: mapped
+- Notes: M002/S02 adds a cross-method test that runs imu_only, event_imu, and image_imu on the same synthetic sequence and asserts identical artifact structure.
 
-### R014 — Strong external baseline wrapper path
+### R014 — The project should support stronger baselines such as UltimateSLAM or ESVO if practical.
 - Class: differentiator
 - Status: active
 - Description: The project should support stronger baselines such as UltimateSLAM or ESVO if practical.
@@ -162,11 +160,9 @@ Use it to track what is actively in scope, what has been validated by completed 
 
 ## Validated
 
-No requirements have been validated by implementation yet.
-
 ## Deferred
 
-### R015 — UltimateSLAM or ESVO production wrapper
+### R015 — Build production-quality wrappers around UltimateSLAM or ESVO if integration is practical.
 - Class: integration
 - Status: deferred
 - Description: Build production-quality wrappers around UltimateSLAM or ESVO if integration is practical.
@@ -177,7 +173,7 @@ No requirements have been validated by implementation yet.
 - Validation: unmapped
 - Notes: Deferred out of M001 and M002 until the benchmark harness and first Event+IMU backend exist.
 
-### R016 — Rich runtime and resource profiling
+### R016 — Add deeper runtime/resource profiling such as CPU/GPU usage and real-time factor reporting.
 - Class: operability
 - Status: deferred
 - Description: Add deeper runtime/resource profiling such as CPU/GPU usage and real-time factor reporting.
@@ -188,7 +184,7 @@ No requirements have been validated by implementation yet.
 - Validation: unmapped
 - Notes: M001 may include basic latency fields, but not full profiling.
 
-### R017 — Multi-method comparison and robustness reporting
+### R017 — Compare multiple methods and summarize robustness/failure behavior across runs.
 - Class: differentiator
 - Status: deferred
 - Description: Compare multiple methods and summarize robustness/failure behavior across runs.
@@ -199,7 +195,7 @@ No requirements have been validated by implementation yet.
 - Validation: unmapped
 - Notes: Deferred until at least `imu_only` and `event_imu` exist.
 
-### R018 — Event-only visual odometry baseline
+### R018 — Add an event-only or event-frame visual odometry baseline.
 - Class: differentiator
 - Status: deferred
 - Description: Add an event-only or event-frame visual odometry baseline.
@@ -212,7 +208,7 @@ No requirements have been validated by implementation yet.
 
 ## Out of Scope
 
-### R019 — Map or orthophoto anchoring
+### R019 — Do not implement absolute correction through map or orthophoto anchoring in these initial benchmark milestones.
 - Class: anti-feature
 - Status: out-of-scope
 - Description: Do not implement absolute correction through map or orthophoto anchoring in these initial benchmark milestones.
@@ -223,7 +219,7 @@ No requirements have been validated by implementation yet.
 - Validation: n/a
 - Notes: Candidate future work after relative pipeline and baselines exist.
 
-### R020 — Satellite matching
+### R020 — Do not implement satellite-image matching in the initial benchmark milestones.
 - Class: anti-feature
 - Status: out-of-scope
 - Description: Do not implement satellite-image matching in the initial benchmark milestones.
@@ -234,7 +230,7 @@ No requirements have been validated by implementation yet.
 - Validation: n/a
 - Notes: Future stretch work only.
 
-### R021 — RL-based or PPO fusion policy
+### R021 — Do not implement RL/PPO policy learning for fusion in the initial milestones.
 - Class: anti-feature
 - Status: out-of-scope
 - Description: Do not implement RL/PPO policy learning for fusion in the initial milestones.
@@ -245,7 +241,7 @@ No requirements have been validated by implementation yet.
 - Validation: n/a
 - Notes: Explicitly deferred by project instructions.
 
-### R022 — Full ensemble learning
+### R022 — Do not implement full ensemble learning in these initial milestones.
 - Class: anti-feature
 - Status: out-of-scope
 - Description: Do not implement full ensemble learning in these initial milestones.
@@ -256,7 +252,7 @@ No requirements have been validated by implementation yet.
 - Validation: n/a
 - Notes: Future work after baselines exist.
 
-### R023 — Embedded optimization and hard real-time deployment
+### R023 — Do not optimize for embedded deployment or hard real-time operation in M001.
 - Class: anti-feature
 - Status: out-of-scope
 - Description: Do not optimize for embedded deployment or hard real-time operation in M001.
@@ -267,7 +263,7 @@ No requirements have been validated by implementation yet.
 - Validation: n/a
 - Notes: Basic latency fields may exist, but embedded hardening is later.
 
-### R024 — Full MVSEC dataset requirement in ordinary CI
+### R024 — Ordinary CI must not require full MVSEC downloads.
 - Class: constraint
 - Status: out-of-scope
 - Description: Ordinary CI must not require full MVSEC downloads.
@@ -293,8 +289,8 @@ No requirements have been validated by implementation yet.
 | R009 | failure-visibility | active | M001-ncx5an/S05 | M001-ncx5an/S02, M001-ncx5an/S04 | mapped |
 | R010 | quality-attribute | active | M001-ncx5an/S05 | M001-ncx5an/S01, M001-ncx5an/S02, M001-ncx5an/S03, M001-ncx5an/S04 | mapped |
 | R011 | integration | active | M001-ncx5an/S03 | M001-ncx5an/S02 | mapped |
-| R012 | core-capability | active | M002/provisional | M001-ncx5an/S03, M001-ncx5an/S04 | unmapped |
-| R013 | integration | active | M002/provisional | M001-ncx5an/S02, M001-ncx5an/S05 | unmapped |
+| R012 | core-capability | active | M002/S03 | M002/S01 | mapped |
+| R013 | integration | active | M002/S02 | M002/S01 | mapped |
 | R014 | differentiator | active | M003/provisional | M001-ncx5an/S03, M002/provisional | unmapped |
 | R015 | integration | deferred | M003/provisional | none | unmapped |
 | R016 | operability | deferred | M003/provisional | none | unmapped |
@@ -310,6 +306,6 @@ No requirements have been validated by implementation yet.
 ## Coverage Summary
 
 - Active requirements: 14
-- Mapped to M001 slices: 11
+- Mapped to slices: 13
 - Validated: 0
-- Unmapped active requirements: 3
+- Unmapped active requirements: 0
