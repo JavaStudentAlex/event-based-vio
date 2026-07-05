@@ -293,3 +293,40 @@ class TestExtrinsicsAwareCorrection:
         assert backend.diagnostics.get("extrinsics_applied") is False
         assert backend.diagnostics.get("extrinsics_source") == "identity_fallback"
         assert backend.diagnostics.get("extrinsics_rejected_reason") == "degenerate_or_not_rotation"
+
+    def test_extrinsics_rejected_missing_data_key(self):
+        sequence = _static_scene_sequence()
+        sequence.calibration.imu_cam_transform_available = True
+        # Note: we intentionally do not set the key in sequence.calibration.data
+
+        backend = EventImuBackend()
+        backend.run(sequence, config=EventImuConfig(imu_config=ImuOnlyConfig()))
+
+        assert backend.diagnostics.get("extrinsics_applied") is False
+        assert backend.diagnostics.get("extrinsics_source") == "identity_fallback"
+
+    def test_extrinsics_rejected_wrong_shape(self):
+        sequence = _static_scene_sequence()
+        sequence.calibration.imu_cam_transform_available = True
+        sequence.calibration.data["imu_cam_transform"] = np.ones(5)
+
+        backend = EventImuBackend()
+        backend.run(sequence, config=EventImuConfig(imu_config=ImuOnlyConfig()))
+
+        assert backend.diagnostics.get("extrinsics_applied") is False
+        assert backend.diagnostics.get("extrinsics_source") == "identity_fallback"
+        assert backend.diagnostics.get("extrinsics_rejected_reason") == "transform_shape_invalid"
+
+    def test_extrinsics_rejected_non_finite(self):
+        sequence = _static_scene_sequence()
+        sequence.calibration.imu_cam_transform_available = True
+        T = np.eye(4)
+        T[0, 0] = np.nan
+        sequence.calibration.data["imu_cam_transform"] = T
+
+        backend = EventImuBackend()
+        backend.run(sequence, config=EventImuConfig(imu_config=ImuOnlyConfig()))
+
+        assert backend.diagnostics.get("extrinsics_applied") is False
+        assert backend.diagnostics.get("extrinsics_source") == "identity_fallback"
+        assert backend.diagnostics.get("extrinsics_rejected_reason") == "non_finite_elements"
