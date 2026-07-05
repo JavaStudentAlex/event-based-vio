@@ -6,9 +6,36 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT_DIR/.github/scripts/aps_tools_common.sh"
 cd "$ROOT_DIR"
 
-mapfile -t features < <(git ls-files '*.feature' | grep -Ev '(^|/)(\.agents|\.codex|\.gsd|\.skills|skills)/' || true)
+CHUNK_INDEX=0
+TOTAL_CHUNKS=1
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --chunk)
+      CHUNK_INDEX="$2"
+      shift 2
+      ;;
+    --total-chunks)
+      TOTAL_CHUNKS="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+mapfile -t all_features < <(git ls-files '*.feature' | grep -Ev '(^|/)(\.agents|\.codex|\.gsd|\.skills|skills)/' || true)
+
+features=()
+for i in "${!all_features[@]}"; do
+  if [ $(( i % TOTAL_CHUNKS )) -eq "$CHUNK_INDEX" ]; then
+    features+=("${all_features[$i]}")
+  fi
+done
+
 if [ "${#features[@]}" -eq 0 ]; then
-  echo "No .feature files found; skipping Gherkin mutation gate."
+  echo "No .feature files found in this chunk; skipping Gherkin mutation gate."
   exit 0
 fi
 
