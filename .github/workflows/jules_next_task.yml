@@ -145,7 +145,7 @@ jobs:
                   "FIRST PRIORITY: inspect `.gsd` Markdown and select exactly one slice that is next in line and not yet "
                   "implemented. Prefer the active "
                   "slice in `.gsd/STATE.md` if it is execution-ready; otherwise use the first unchecked `[ ]` execution-ready "
-                  "slice in the active milestone roadmap under `.gsd/milestones/`. Use `.gsd/QUEUE.md` only as supporting "
+                  "slice in the active milestone roadmap under `.gsd/phases/`. Use `.gsd/QUEUE.md` only as supporting "
                   "context for that one slice. The selected slice directory may contain `tasks/T*-PLAN.md` files; use "
                   "those task files as the implementation skeleton for the slice."
               )

@@ -5,15 +5,25 @@ on:
     branches: [main]
     paths:
       - '**/*.py'
+      - '**/*.feature'
       - 'pyproject.toml'
       - 'uv.lock'
+      - '.pre-commit-config.yaml'
+      - '.github/scripts/**'
+      - '.github/workflows/ci-slow-lane.yml'
   pull_request:
     branches: [main]
     paths:
       - '**/*.py'
+      - '**/*.feature'
       - 'pyproject.toml'
       - 'uv.lock'
+      - '.pre-commit-config.yaml'
+      - '.github/scripts/**'
+      - '.github/workflows/ci-slow-lane.yml'
   workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
 
 permissions:
   contents: read
@@ -64,7 +74,7 @@ jobs:
           set -euo pipefail
           mkdir -p build/slow-lane
           git ls-files '*.feature' \
-            | grep -Ev '(^|/)(\.agents|\.codex|\.gsd|\.skills|skills)/' \
+            | grep -Ev '(^|/)(\.agents|\.codex|\.gsd|\.skills|skills|notebooks)/' \
             > build/slow-lane/feature-files.txt || true
           if [ -s build/slow-lane/feature-files.txt ]; then
             echo "has_features=true" >> "$GITHUB_OUTPUT"
@@ -92,7 +102,7 @@ jobs:
           if [ "${{ steps.changed-python-files.outputs.any_changed }}" == "true" ]; then
             for file in $CHANGED_FILES; do
               # Exclude repository tooling and tests; CRAP/DRY gates target production code only.
-              if [[ ! "$file" =~ (^|/)(\.agents|\.codex|\.github|\.gsd|\.skills|skills|mutants|tests)/ ]] \
+              if [[ ! "$file" =~ (^|/)(\.agents|\.codex|\.github|\.gsd|\.skills|skills|mutants|tests|notebooks)/ ]] \
                 && [[ ! "$file" == *"test_"* ]] \
                 && [[ ! "$file" == *"_test.py" ]]; then
                 echo "$file" >> build/slow-lane/python-files.txt
@@ -187,6 +197,7 @@ jobs:
           path: |
             build/slow-lane/
             build/acceptance/
+            build/acceptance-mutation/
           if-no-files-found: ignore
 
       - name: Fail if any slow-lane gate failed
