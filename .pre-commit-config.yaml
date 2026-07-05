@@ -68,8 +68,10 @@ repos:
         name: py_compile
         entry: >-
           bash -c 'mapfile -t py_files < <(git ls-files "*.py" "**/*.py" | sort -u);
-          if [ "${#py_files[@]}" -eq 0 ]; then echo "No Python files found; skipping py_compile."; exit 0; fi;
-          uv run python -m py_compile "${py_files[@]}"'
+          existing_py_files=();
+          for py_file in "${py_files[@]}"; do if [ -f "$py_file" ]; then existing_py_files+=("$py_file"); fi; done;
+          if [ "${#existing_py_files[@]}" -eq 0 ]; then echo "No Python files found; skipping py_compile."; exit 0; fi;
+          uv run python -m py_compile "${existing_py_files[@]}"'
         language: system
         stages: [manual]
         pass_filenames: false

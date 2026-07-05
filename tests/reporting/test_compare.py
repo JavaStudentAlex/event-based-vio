@@ -145,6 +145,100 @@ def test_compare_cli_end_to_end(tmp_path, capsys):
     assert (out_dir / "backend_comparison_drift.png").exists()
 
 
+def _add_estimated_trajectory(run_dir: Path, health_labels: list[str]) -> None:
+    import numpy as np
+
+    from nav_benchmark.trajectory.export import export_project_csv
+    from nav_benchmark.trajectory.models import Trajectory
+
+    count = len(health_labels)
+    trajectory = Trajectory(
+        timestamps=np.arange(count, dtype=np.float64),
+        method="imu_only",
+        positions=np.zeros((count, 3)),
+        orientations=np.tile([0.0, 0.0, 0.0, 1.0], (count, 1)),
+        health=np.array(health_labels, dtype=object),
+    )
+    export_project_csv(trajectory, run_dir / "estimated_trajectory.csv")
+
+
+def _add_error_vs_time(run_dir: Path, x_offset: float) -> None:
+    header = (
+        "timestamp,est_x,est_y,est_z,gt_aligned_x,gt_aligned_y,gt_aligned_z,"
+        "error_x,error_y,error_z,error_magnitude,health,association_residual"
+    )
+    rows = [header]
+    for i in range(5):
+        t = float(i)
+        rows.append(f"{t},{t + x_offset},{t * 0.5},0.0,{t},{t * 0.5},0.0,{x_offset},0,0,{x_offset},OK,0.01")
+    (run_dir / "error_vs_time.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+
+class TestFailureIntervalAggregation:
+    def test_intervals_extracted_from_estimated_trajectory(self, tmp_path):
+        run_dir = _write_run_dir(tmp_path, "a", "imu_only", drift_percent=5.0)
+        _add_estimated_trajectory(run_dir, ["OK", "OK", "DEGRADED", "DEGRADED", "LOST", "OK", "INVALID"])
+
+        summary = load_run_summary(run_dir)
+
+        assert summary.failure_interval_count == 3
+        states = [interval["state"] for interval in summary.failure_intervals]
+        assert states == ["DEGRADED", "LOST", "INVALID"]
+        degraded = summary.failure_intervals[0]
+        assert degraded["t_start"] == 2.0 and degraded["t_end"] == 3.0
+        assert summary.failure_total_duration_sec == pytest.approx(1.0 + 0.0 + 0.0)
+
+    def test_missing_trajectory_yields_empty_aggregation(self, tmp_path):
+        run_dir = _write_run_dir(tmp_path, "a", "imu_only", drift_percent=5.0)
+        summary = load_run_summary(run_dir)
+        assert summary.failure_interval_count == 0
+        assert summary.failure_intervals == []
+
+    def test_failure_intervals_json_written(self, tmp_path):
+        a = _write_run_dir(tmp_path, "a", "imu_only", drift_percent=25.0)
+        b = _write_run_dir(tmp_path, "b", "event_imu", drift_percent=3.0)
+        _add_estimated_trajectory(a, ["OK", "LOST", "LOST", "OK"])
+        _add_estimated_trajectory(b, ["OK", "OK", "OK", "OK"])
+
+        summaries = compare_runs([a, b])
+        paths = write_comparison_artifacts(summaries, tmp_path / "cmp")
+
+        payload = json.loads(paths["failure_intervals"].read_text(encoding="utf-8"))
+        assert payload["imu_only"]["interval_count"] == 1
+        assert payload["imu_only"]["intervals"][0]["state"] == "LOST"
+        assert payload["event_imu"]["interval_count"] == 0
+
+        with open(paths["comparison_table"], newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        by_method = {row["method"]: row for row in rows}
+        assert by_method["imu_only"]["failure_interval_count"] == "1"
+
+
+class TestTrajectoryOverlay:
+    def test_overlay_written_when_series_available(self, tmp_path):
+        a = _write_run_dir(tmp_path, "a", "imu_only", drift_percent=25.0)
+        b = _write_run_dir(tmp_path, "b", "event_imu", drift_percent=3.0)
+        _add_error_vs_time(a, x_offset=0.4)
+        _add_error_vs_time(b, x_offset=0.1)
+
+        summaries = compare_runs([a, b])
+        paths = write_comparison_artifacts(summaries, tmp_path / "cmp")
+
+        assert "trajectory_overlay" in paths
+        assert paths["trajectory_overlay"].exists()
+        assert (tmp_path / "cmp" / "comparison_trajectories.svg").exists()
+
+    def test_overlay_skipped_without_series(self, tmp_path):
+        a = _write_run_dir(tmp_path, "a", "imu_only", drift_percent=25.0)
+        b = _write_run_dir(tmp_path, "b", "event_imu", drift_percent=3.0)
+
+        summaries = compare_runs([a, b])
+        paths = write_comparison_artifacts(summaries, tmp_path / "cmp")
+
+        assert "trajectory_overlay" not in paths
+        assert not (tmp_path / "cmp" / "comparison_trajectories.png").exists()
+
+
 def test_compare_cli_fails_on_unevaluated_run(tmp_path, capsys):
     from nav_benchmark.run import main
 

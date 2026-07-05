@@ -1,7 +1,7 @@
 # Codebase Map
 
-Generated: 2026-07-05T05:18:39Z | Files: 173 | Described: 0/173
-<!-- gsd:codebase-meta {"generatedAt":"2026-07-05T05:18:39Z","fingerprint":"fd79ff1b447de46fbb733c5f2266fdfd8002410d","fileCount":173,"truncated":false} -->
+Generated: 2026-07-05T15:30:02Z | Files: 182 | Described: 0/182
+<!-- gsd:codebase-meta {"generatedAt":"2026-07-05T15:30:02Z","fingerprint":"5f12f6327dd929179e00befae46fc993ad82cf89","fileCount":182,"truncated":false} -->
 
 ### (root)/
 - `.gitignore`
@@ -51,7 +51,6 @@ Generated: 2026-07-05T05:18:39Z | Files: 173 | Described: 0/173
 - `.github/scripts/scripts/precommit_aps_gate.sh`
 - `.github/scripts/scripts/precommit_coverage_gate.sh`
 - `.github/scripts/scripts/precommit_gherkin_mutation_gate.sh`
-- `.github/scripts/scripts/precommit_language_mutation_gate.py`
 - `.github/scripts/scripts/resolve_gsd_slice.py`
 - `.github/scripts/scripts/run_acceptance_mutation_worker.py`
 - `.github/scripts/scripts/run_acceptance_mutation_worker.sh`
@@ -87,6 +86,9 @@ Generated: 2026-07-05T05:18:39Z | Files: 173 | Described: 0/173
 ### configs/
 - `configs/google_earth_sequence.yaml`
 
+### docs/baselines/
+- `docs/baselines/external.md`
+
 ### docs/datasets/
 - `docs/datasets/mvsec.md`
 
@@ -95,6 +97,7 @@ Generated: 2026-07-05T05:18:39Z | Files: 173 | Described: 0/173
 
 ### docs/run/
 - `docs/run/cli.md`
+- `docs/run/mvsec-manual-runs.md`
 
 ### docs/trajectory/
 - `docs/trajectory/export-contract.md`
@@ -112,6 +115,7 @@ Generated: 2026-07-05T05:18:39Z | Files: 173 | Described: 0/173
 - `outputs/example_match/match_result.json`
 
 ### scripts/
+- `scripts/convert_mvsec_bag_to_h5.py`
 - `scripts/download_mvsec.sh`
 - `scripts/draw_routes.py`
 - `scripts/experiment_routes.py`
@@ -130,6 +134,7 @@ Generated: 2026-07-05T05:18:39Z | Files: 173 | Described: 0/173
 
 ### src/nav_benchmark/
 - `src/nav_benchmark/__init__.py`
+- `src/nav_benchmark/__main__.py`
 - `src/nav_benchmark/run.py`
 - `src/nav_benchmark/validation.py`
 
@@ -145,6 +150,7 @@ Generated: 2026-07-05T05:18:39Z | Files: 173 | Described: 0/173
 
 ### src/nav_benchmark/datasets/
 - `src/nav_benchmark/datasets/__init__.py`
+- `src/nav_benchmark/datasets/convert.py`
 - `src/nav_benchmark/datasets/mvsec.py`
 - `src/nav_benchmark/datasets/synthetic.py`
 
@@ -165,6 +171,7 @@ Generated: 2026-07-05T05:18:39Z | Files: 173 | Described: 0/173
 - `src/nav_benchmark/events/__init__.py`
 - `src/nav_benchmark/events/diagnostics.py`
 - `src/nav_benchmark/events/representations.py`
+- `src/nav_benchmark/events/shift.py`
 
 ### src/nav_benchmark/reporting/
 - `src/nav_benchmark/reporting/__init__.py`
@@ -198,6 +205,8 @@ Generated: 2026-07-05T05:18:39Z | Files: 173 | Described: 0/173
 - `tests/test_validation.py`
 
 ### tests/baselines/
+- `tests/baselines/test_event_imu_backend.py`
+- `tests/baselines/test_external_tool.py`
 - `tests/baselines/test_external_trajectory.py`
 - `tests/baselines/test_imu_only_smoke.py`
 - `tests/baselines/test_visual_event_ensemble.py`
@@ -225,6 +234,7 @@ Generated: 2026-07-05T05:18:39Z | Files: 173 | Described: 0/173
 ### tests/events/
 - `tests/events/test_diagnostics.py`
 - `tests/events/test_representations.py`
+- `tests/events/test_shift.py`
 
 ### tests/map_matching/
 - `tests/map_matching/test_processing.py`
@@ -241,6 +251,7 @@ Generated: 2026-07-05T05:18:39Z | Files: 173 | Described: 0/173
 - `tests/reporting/test_compare.py`
 
 ### tests/scripts/
+- `tests/scripts/test_convert_mvsec_bag_to_h5.py`
 - `tests/scripts/test_experiment_routes.py`
 - `tests/scripts/test_simulate_drone.py`
 

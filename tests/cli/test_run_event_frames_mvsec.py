@@ -27,11 +27,13 @@ def _write_mvsec_h5(h5_path: Path, *, event_count: int = 400, duration_sec: floa
         grp_events.create_dataset("y", data=y)
         grp_events.create_dataset("p", data=p)
 
+        # Time-varying accelerations so the integrated trajectory spans 3D
+        # (SE(3) Umeyama alignment needs non-degenerate covariance).
         grp_imu = f.create_group("/davis/left/imu")
         grp_imu.create_dataset("ts", data=imu_t)
-        grp_imu.create_dataset("linear_acceleration_x", data=np.zeros_like(imu_t))
-        grp_imu.create_dataset("linear_acceleration_y", data=np.zeros_like(imu_t))
-        grp_imu.create_dataset("linear_acceleration_z", data=np.full_like(imu_t, 9.81))
+        grp_imu.create_dataset("linear_acceleration_x", data=np.sin(2.0 * np.pi * imu_t))
+        grp_imu.create_dataset("linear_acceleration_y", data=np.cos(2.0 * np.pi * imu_t))
+        grp_imu.create_dataset("linear_acceleration_z", data=9.81 + 0.5 * np.sin(4.0 * np.pi * imu_t))
         grp_imu.create_dataset("angular_velocity_x", data=np.zeros_like(imu_t))
         grp_imu.create_dataset("angular_velocity_y", data=np.zeros_like(imu_t))
         grp_imu.create_dataset("angular_velocity_z", data=np.zeros_like(imu_t))
@@ -39,8 +41,8 @@ def _write_mvsec_h5(h5_path: Path, *, event_count: int = 400, duration_sec: floa
         grp_pose = f.create_group("/davis/left/pose")
         grp_pose.create_dataset("ts", data=imu_t)
         grp_pose.create_dataset("px", data=np.linspace(0.0, 1.0, 11))
-        grp_pose.create_dataset("py", data=np.zeros_like(imu_t))
-        grp_pose.create_dataset("pz", data=np.zeros_like(imu_t))
+        grp_pose.create_dataset("py", data=0.3 * np.sin(2.0 * np.pi * imu_t))
+        grp_pose.create_dataset("pz", data=0.2 * np.sin(np.pi * imu_t))
         grp_pose.create_dataset("qx", data=np.zeros_like(imu_t))
         grp_pose.create_dataset("qy", data=np.zeros_like(imu_t))
         grp_pose.create_dataset("qz", data=np.zeros_like(imu_t))
@@ -94,6 +96,62 @@ def test_event_imu_runs_on_raw_mvsec_events(mvsec_h5: Path, tmp_path: Path):
     assert diagnostics["window_count"] == 10
     assert 0.0 < diagnostics["positive_fraction"] < 1.0
     assert diagnostics["active_pixel_fraction"] > 0.0
+
+
+def test_event_imu_run_evaluate_validate_full_artifact_set(mvsec_h5: Path, tmp_path: Path):
+    """M002 acceptance: event_imu produces the full content-valid artifact set."""
+    output_root = tmp_path / "runs"
+    _run_cli(
+        [
+            "run",
+            "--method",
+            "event_imu",
+            "--dataset",
+            "mvsec",
+            "--sequence",
+            "mini",
+            "--input",
+            str(mvsec_h5),
+            "--output-root",
+            str(output_root),
+            "--event-window-ms",
+            "100",
+            "--evaluate",
+        ]
+    )
+
+    run_dir = next(output_root.glob("*_event_imu_mini"))
+    expected_artifacts = [
+        "estimated_trajectory.csv",
+        "estimated_trajectory_tum.txt",
+        "ground_truth_aligned.csv",
+        "metrics.json",
+        "error_vs_time.csv",
+        "error_vs_distance.csv",
+        "trajectory_plot.png",
+        "drift_plot.png",
+        "run.log",
+        "failure_notes.md",
+        "run_manifest.json",
+    ]
+    for name in expected_artifacts:
+        artifact = run_dir / name
+        assert artifact.exists(), f"missing artifact: {name}"
+        assert artifact.stat().st_size > 0, f"empty artifact: {name}"
+
+    metrics = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["status"] == "OK"
+    assert metrics["metrics"]["ate_rmse"] is not None
+    assert metrics["runtime"]["latency_mean_ms"] is not None
+
+    manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["method"] == "event_imu"
+    assert manifest["evaluation"]["status"] == "success"
+    run_diagnostics = manifest["config"]["run_diagnostics"]
+    assert run_diagnostics["event_pair_count"] == 9
+    assert 0.0 < run_diagnostics["imu_samples_covered_fraction"] <= 1.0
+
+    _run_cli(["validate", "--run-dir", str(run_dir)])
 
 
 def test_manifest_omits_event_diagnostics_without_events(tmp_path: Path):

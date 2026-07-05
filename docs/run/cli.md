@@ -26,12 +26,43 @@ python -m nav_benchmark.run run --method imu_only --dataset mvsec --sequence out
 ```
 *Note: `--input` is required when `--dataset` is set to `mvsec`.*
 
+### 3. Event+IMU on MVSEC
+To run the `event_imu` backend (IMU propagation with event-frame shift corrections)
+on an MVSEC HDF5 file — see
+[`docs/run/mvsec-manual-runs.md`](mvsec-manual-runs.md) for converting the MVSEC
+rosbag distribution into this layout:
+```bash
+python -m nav_benchmark.run run --method event_imu --dataset mvsec \
+  --sequence indoor_flying1 --input data/indoor_flying1.h5 --evaluate
+```
+
+### 4. External baseline via subprocess adapter
+To run an external SLAM/VIO tool through the adapter (see
+[`docs/baselines/external.md`](../baselines/external.md)):
+```bash
+python -m nav_benchmark.run run --method external --dataset mvsec \
+  --sequence outdoor_day1 --input data/outdoor_day1.h5 \
+  --external-command "ultimateslam_wrapper --input data/converted --output /tmp/us.tum" \
+  --external-trajectory /tmp/us.tum \
+  --external-tool-name ultimateslam \
+  --external-version-command "ultimateslam_wrapper --version"
+```
+
 ## CLI Options Reference
 
 The `run` subcommand supports the following arguments:
 
 * `--method` (required): The estimation baseline to run. Supported values:
   * `imu_only`: IMU-only dead-reckoning propagation.
+  * `rgb_vo`: Feature-based monocular RGB visual odometry.
+  * `event_vo`: Feature-based visual odometry on accumulated event frames.
+  * `event_imu`: IMU propagation corrected by phase-correlation shifts between
+    fixed-time event frames (gyro-compensated, norm-bounded corrections).
+  * `image_imu`: IMU propagation fused with RGB visual odometry.
+  * `multimodal_vio`: IMU propagation fused with RGB and event cues.
+  * `ensemble`: Fusion across all baselines (see `--fusion`).
+  * `external`: Externally produced trajectory, either imported from a file or
+    produced by running an external tool via `--external-command`.
 * `--dataset` (required): Dataset source type. Supported values:
   * `synthetic`: Deterministic mock IMU data.
   * `mvsec`: Real MVSEC dataset.
@@ -39,6 +70,24 @@ The `run` subcommand supports the following arguments:
 * `--input` (required for `mvsec`, optional for `synthetic`): Path to the input HDF5 data file or generated synthetic sequence directory.
 * `--output-root` (optional, default: `runs`): The directory where all run folders will be generated.
 * `--resume` (optional): If present, automatically handles existing run folder collisions by appending suffix increments (e.g., `-r1`, `-r2`).
+* `--event-window-ms` (optional, default: `50`): Fixed-time window for event
+  frames built from raw events and for event-stream diagnostics.
+* `--fusion` (optional): Ensemble fusion mode (`confidence_weighted`,
+  `weighted_ekf`, `winner_takes_healthy`).
+* `--evaluate` (optional): Evaluate against ground truth immediately after the
+  run and write the evaluation artifacts into the run directory.
+* `--ground-truth` (optional): Ground-truth override used with `--evaluate`.
+* `--external-trajectory` (required for `external`): Trajectory file to import
+  (TUM or project CSV). With `--external-command`, the file the tool is
+  expected to write.
+* `--external-format` (optional, default `auto`): `tum`, `csv`, or `auto`.
+* `--external-command` (optional): Command that runs the external tool as a
+  subprocess before importing `--external-trajectory`.
+* `--external-workdir`, `--external-timeout-sec`, `--external-tool-name`,
+  `--external-version-command` (optional): Working directory, timeout
+  (default 3600 s), manifest tool name, and version probe for the external
+  command. Exit status, stderr tail, duration, and version are recorded in
+  `run_manifest.json`; failures still write the manifest and failure notes.
 
 ## Run Directory Structure
 
@@ -139,6 +188,41 @@ inspection.
 See [`docs/evaluation/drift-evaluation.md`](../evaluation/drift-evaluation.md)
 for the alignment policy, metric definitions, CSV columns, plot meanings, and
 dataset-dependent checks.
+
+## Comparison
+
+Use the `compare` subcommand to aggregate two or more evaluated run
+directories into one report:
+```bash
+python -m nav_benchmark.run compare \
+  --run-dirs runs/<run_a> runs/<run_b> \
+  --output runs/comparison
+```
+
+It writes into `--output`:
+
+* `metrics_comparison.json` — all run summaries, ranked by drift percent.
+* `comparison_table.csv` — one row per run: ATE/RPE, drift, coverage,
+  failure-interval count and total duration, latency mean/p95, and the
+  approximate real-time factor.
+* `failure_intervals.json` — aggregated contiguous `DEGRADED`/`LOST`/`INVALID`
+  intervals per method, extracted from each run's `estimated_trajectory.csv`.
+* `backend_comparison_drift.{png,svg}` — drift-over-distance comparison.
+* `comparison_trajectories.{png,svg}` — estimated-vs-ground-truth XY overlay
+  across methods (written when the runs contain evaluated `error_vs_time.csv`).
+
+## Dataset Conversion for External Adapters
+
+Use the `convert` subcommand to export a sequence's streams to a plain layout
+that external tool wrappers can consume (see
+[`docs/baselines/external.md`](../baselines/external.md)):
+```bash
+python -m nav_benchmark.run convert --dataset mvsec --sequence outdoor_day1 \
+  --input data/outdoor_day1.h5 --output-dir data/converted/outdoor_day1
+```
+This writes `events.csv`, `imu.csv`, `ground_truth.csv`, `images/` +
+`image_timestamps.csv` (each only when the stream exists), and a
+`conversion_manifest.json` recording counts and time ranges.
 
 ### Manifest Details
 `run_manifest.json` contains:

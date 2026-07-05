@@ -10,7 +10,13 @@ from typing import Any, NoReturn
 import numpy as np
 
 from nav_benchmark.baselines.event_imu import EventImuBackend, EventImuConfig
-from nav_benchmark.baselines.external import ExternalTrajectoryBackend, ExternalTrajectoryConfig
+from nav_benchmark.baselines.external import (
+    ExternalToolBackend,
+    ExternalToolConfig,
+    ExternalToolError,
+    ExternalTrajectoryBackend,
+    ExternalTrajectoryConfig,
+)
 from nav_benchmark.baselines.image_imu import ImageImuBackend, ImageImuConfig
 from nav_benchmark.baselines.imu import ImuOnlyBackend, ImuOnlyConfig
 from nav_benchmark.baselines.multimodal_vio import MultimodalVioBackend, MultimodalVioConfig
@@ -284,9 +290,11 @@ def _run_event_vo(args, sequence: MvsecSequence, run_dir: Path | None):
 def _run_event_imu(args, sequence: MvsecSequence, run_dir: Path | None):
     config = EventImuConfig(
         imu_config=_imu_only_config_for_sequence(args, sequence),
-        event_vo_config=_event_vo_config(run_dir),
+        event_window_sec=_event_window_sec(args),
     )
-    return _run_backend(EventImuBackend(), sequence, config)
+    result = EventImuBackend().run_result(sequence, config=config)
+    config.run_diagnostics = result.diagnostics
+    return result.trajectory, config
 
 
 def _run_image_imu(args, sequence: MvsecSequence, run_dir: Path | None):
@@ -307,6 +315,18 @@ def _run_multimodal_vio(args, sequence: MvsecSequence, run_dir: Path | None):
 
 
 def _run_external(args, sequence: MvsecSequence, run_dir: Path | None):
+    command = getattr(args, "external_command", None)
+    if command:
+        tool_config = ExternalToolConfig(
+            command=command,
+            trajectory_path=getattr(args, "external_trajectory", "") or "",
+            format=getattr(args, "external_format", "auto"),
+            workdir=getattr(args, "external_workdir", None),
+            timeout_sec=getattr(args, "external_timeout_sec", 3600.0),
+            tool_name=getattr(args, "external_tool_name", "external"),
+            version_command=getattr(args, "external_version_command", None),
+        )
+        return _run_backend(ExternalToolBackend(), sequence, tool_config)
     config = ExternalTrajectoryConfig(
         trajectory_path=getattr(args, "external_trajectory", "") or "",
         format=getattr(args, "external_format", "auto"),
@@ -320,7 +340,7 @@ def _ensemble_baselines(args, sequence: MvsecSequence, run_dir: Path | None, imu
     baseline_trajectories["rgb_vo"] = RgbVoBackend().run(sequence, config=_rgb_vo_config(run_dir))
     baseline_trajectories["event_vo"] = EventVoBackend().run(sequence, config=_event_vo_config(run_dir))
 
-    event_imu_config = EventImuConfig(imu_config=imu_config, event_vo_config=_event_vo_config(run_dir))
+    event_imu_config = EventImuConfig(imu_config=imu_config, event_window_sec=_event_window_sec(args))
     image_imu_config = ImageImuConfig(imu_config=imu_config, rgb_vo_config=_rgb_vo_config(run_dir))
     multimodal_vio_config = MultimodalVioConfig(
         imu_config=imu_config,
@@ -653,6 +673,32 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Format of the external trajectory file",
     )
     run_parser.add_argument(
+        "--external-command",
+        help=(
+            "Command that runs the external tool (executed via subprocess); the tool must write "
+            "the trajectory file given by --external-trajectory"
+        ),
+    )
+    run_parser.add_argument(
+        "--external-workdir",
+        help="Working directory for --external-command",
+    )
+    run_parser.add_argument(
+        "--external-timeout-sec",
+        type=float,
+        default=3600.0,
+        help="Timeout in seconds for --external-command",
+    )
+    run_parser.add_argument(
+        "--external-tool-name",
+        default="external",
+        help="Human-readable external tool name recorded in the run manifest",
+    )
+    run_parser.add_argument(
+        "--external-version-command",
+        help="Command whose first output line is recorded as the external tool version",
+    )
+    run_parser.add_argument(
         "--evaluate",
         action="store_true",
         help="After a successful run, evaluate against ground truth and write evaluation artifacts",
@@ -727,6 +773,38 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--output",
         required=True,
         help="Directory where comparison artifacts are written",
+    )
+
+    # Subcommand 'convert'
+    convert_parser = subparsers.add_parser(
+        "convert",
+        help="Export a sequence's streams to a plain layout for external baseline adapters",
+    )
+    convert_parser.add_argument(
+        "--dataset",
+        required=True,
+        choices=["synthetic", "mvsec"],
+        help="Dataset type",
+    )
+    convert_parser.add_argument(
+        "--sequence",
+        required=True,
+        help="Name of the sequence to convert",
+    )
+    convert_parser.add_argument(
+        "--input",
+        help="Path to the input dataset (required for mvsec dataset)",
+    )
+    convert_parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Directory where the converted streams are written",
+    )
+    convert_parser.add_argument(
+        "--event-window-ms",
+        type=float,
+        default=50.0,
+        help="Window length in milliseconds used when event frames are built from raw events",
     )
 
     # Subcommand 'validate'
@@ -870,6 +948,35 @@ def _execute_run(args, run_dir: Path, log_message) -> None:
     log_message("[FINISHED] Run completed successfully.")
 
 
+def _write_failed_run_artifacts(args, run_dir: Path, error: Exception) -> None:
+    """Keep a failed run diagnosable: manifest with failure status plus failure notes."""
+    manifest: dict[str, Any] = {
+        "method": args.method,
+        "dataset": args.dataset,
+        "sequence": args.sequence,
+        "input": getattr(args, "input", None),
+        "code_version": get_code_version(),
+        "status": "failed",
+        "error_message": str(error),
+    }
+    if isinstance(error, ExternalToolError):
+        manifest["external_execution"] = make_json_serializable(error.execution)
+    with open(run_dir / "run_manifest.json", "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=4)
+
+    notes = f"""# Run Failure Notes
+
+## Run Failed
+
+- **Method**: {args.method}
+- **Sequence**: {args.sequence}
+- **Error**: {error}
+
+See run.log for the full execution log.
+"""
+    (run_dir / "failure_notes.md").write_text(notes, encoding="utf-8")
+
+
 def _handle_run_command(args, parser: argparse.ArgumentParser) -> None:
     _validate_run_args(args, parser)
 
@@ -880,6 +987,10 @@ def _handle_run_command(args, parser: argparse.ArgumentParser) -> None:
         _execute_run(args, run_dir, log_message)
     except Exception as e:
         log_message(f"[FAILED] Run failed with error: {e}")
+        try:
+            _write_failed_run_artifacts(args, run_dir, e)
+        except Exception as write_err:
+            log_message(f"WARNING: failed to write failure artifacts: {write_err}")
         raise
     if getattr(args, "evaluate", False):
         log_message("Evaluating run against ground truth...")
@@ -1067,6 +1178,21 @@ def _handle_compare_command(args, parser: argparse.ArgumentParser) -> None:
         print(f"Wrote {name}: {path}")
 
 
+def _handle_convert_command(args, parser: argparse.ArgumentParser) -> None:
+    from nav_benchmark.datasets.convert import export_sequence_streams
+
+    if args.dataset == "mvsec" and not args.input:
+        parser.error("--input is required when --dataset is 'mvsec'")
+
+    def log_message(msg: str) -> None:
+        print(msg)
+
+    sequence = load_dataset_sequence(args, log_message)
+    manifest = export_sequence_streams(sequence, Path(args.output_dir))
+    stream_names = ", ".join(sorted(manifest["streams"])) or "none"
+    print(f"Converted sequence '{args.sequence}' to {args.output_dir} (streams: {stream_names})")
+
+
 def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
@@ -1075,6 +1201,7 @@ def main() -> None:
         "eval": _handle_eval_command,
         "validate": _handle_validate_command,
         "compare": _handle_compare_command,
+        "convert": _handle_convert_command,
     }
     handlers[args.command](args, parser)
 
