@@ -64,11 +64,9 @@ dummy_output
 # ── GSD baseline (auto-generated) ──
 .gsd-worktrees/
 .mypy_cache
-milestone_1_event_imu_vio.md
 .claude
 runs
 tmp_runs
-slam_ensemble_implementation_task.md
 
 # ── GSD baseline (auto-generated) ──
 .gsd-backups/
@@ -90,3 +88,4 @@ slam_ensemble_implementation_task.md
 .gsd/DISCUSSION-MANIFEST.json
 .gsd/milestones/**/*-CONTINUE.md
 .gsd/milestones/**/continue.md
+waypoint-images
