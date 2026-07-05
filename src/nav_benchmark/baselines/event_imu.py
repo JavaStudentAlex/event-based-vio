@@ -441,7 +441,7 @@ class EventImuBackend(BaseOdometryBackend):
     required_streams = ("imu", "event_frames")
 
     def __init__(self) -> None:
-        self.diagnostics: dict[str, float | int] = {}
+        self.diagnostics: dict[str, float | int | str | bool] = {}
 
     def run(self, sequence: MvsecSequence, *, config: EventImuConfig | None = None) -> Trajectory:
         cfg = _event_imu_config(config)
