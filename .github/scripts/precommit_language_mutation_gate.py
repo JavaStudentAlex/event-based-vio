@@ -34,6 +34,7 @@ EXCLUDED_DIRS = {
     "mutants",
     "skills",
     "tests",
+    "tools",
 }
 
 ALSO_COPY = [
@@ -100,6 +101,8 @@ def configure_mutmut(source_paths: list[Path]) -> None:
             "./skills/*",
             "mutants/*",
             "./mutants/*",
+            "tools/*",
+            "./tools/*",
         ],
         do_not_mutate_patterns=[],
         max_stack_depth=-1,

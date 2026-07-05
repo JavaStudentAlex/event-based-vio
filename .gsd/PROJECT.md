@@ -11,29 +11,26 @@ The one thing that must work even if everything else is cut: the repo must produ
 ## Project Shape
 
 - **Complexity:** complex
-- **Why:** The project spans dataset ingestion, synchronization, trajectory contracts, odometry backends, evaluation math, plots, CLI artifacts, and later external baseline integration.
-- **Web stack:** not a web UI
+- **Why:** The project spans dataset ingestion, synchronization, trajectory contracts, odometry backends, evaluation math, plotting, and machine-learning ensembles across multiple sensor modalities.
+- **Milestone sequence:**
+  1. M001: MVSEC Pipeline and IMU Sanity Benchmark (prove data flows + relative eval). Note: the final slice of M001 has been overridden by the user to execute completely and directly close out the milestone.
+  2. M002: Event-IMU and Image-IMU Baselines (add real vision backends).
+  3. M003: Robustness Scoring and Multimodal Ensemble (add fusion/gating).
+
+## Known Constraints
+
+- **Dependency limits:** Follow `pyproject.toml` (numpy, scipy, pandas, matplotlib, opencv-python, h5py, rosbags, evo, pyyaml, scikit-learn).
+- **Environment:** Run tests via `uv run pytest`.
+- **Runtime:** No ROS installation required; use rosbags to parse `.bag` natively if needed, but prefer MVSEC's provided HDF5 format.
+- **State isolation:** Do not commit MVSEC data archives or bulky logs.
 
 ## Current State
 
-Planning is complete for the primary milestone. No implementation has been validated yet. Existing project context indicates Python 3.13 with `uv`, MVSEC-first scope, CI configured, and no current tests.
-
-## Architecture / Key Patterns
-
-- Use a real Python package under `src/nav_benchmark`.
-- Use `h5py` for first-pass MVSEC HDF5 access.
-- Use `numpy`, `scipy`, `pandas`, `matplotlib`, `pyyaml`, `rich`, `tqdm`, and `evo` according to their benchmark roles.
-- Keep project-owned CSV and `metrics.json` as the stable benchmark contract.
-- Export TUM trajectory files for compatibility with SLAM/VIO evaluation tooling.
-- Define a stable minimal odometry backend contract in M001 so later `event_imu`, UltimateSLAM, ESVO, or ensemble backends can reuse the same export/evaluation path.
-- Generated benchmark artifacts live under `runs/` and should stay untracked.
-
-## Capability Contract
-
-See `.gsd/REQUIREMENTS.md` for the explicit capability contract, requirement status, and coverage mapping.
+M001 (MVSEC Pipeline and IMU Sanity Benchmark) is concluding. We are in the final slice (S06) which fixes a validation string mismatch and concludes both the slice and the overall milestone as directed by the user override.
 
 ## Milestone Sequence
 
-- [ ] M001-ncx5an: MVSEC Pipeline and IMU Sanity Benchmark — prove the deterministic MVSEC benchmark harness with `imu_only`, standard artifacts, synthetic CI tests, and drift-over-distance evaluation.
-- [ ] M002: First Event+IMU Odometry Backend — add a simple but real Event+IMU relative odometry backend through the M001 backend contract and artifact schema.
-- [ ] M003: Strong Baselines and Benchmark Reporting — add stronger wrappers such as UltimateSLAM or ESVO if practical, plus richer runtime/failure reporting and method comparison.
+- [x] M001: M001-ncx5an: MVSEC Pipeline and IMU Sanity Benchmark — Build the first trustworthy benchmark foundation for the MVSEC event-camera navigation project.
+- [ ] M001-ncx5an: MVSEC Pipeline and IMU Sanity Benchmark — Build the first trustworthy benchmark foundation for the MVSEC event-camera navigation project.
+- [ ] M002: First Event+IMU Odometry Backend — Planned.
+- [ ] M003: Strong Baselines and Benchmark Reporting — Planned.
