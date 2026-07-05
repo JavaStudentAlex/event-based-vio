@@ -27,7 +27,7 @@ jobs:
   discover:
     name: Discover mutation targets
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     outputs:
       has_python: ${{ steps.python-targets.outputs.has_python }}
@@ -82,12 +82,46 @@ jobs:
           echo "Python mutation targets:"
           cat build/slow-lane/python-files.txt
 
+      - name: Set up Python
+        if: steps.python-targets.outputs.has_python == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        if: steps.python-targets.outputs.has_python == 'true'
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Go for APS dev tools
+        if: steps.python-targets.outputs.has_python == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Bootstrap development environment
+        if: steps.python-targets.outputs.has_python == 'true'
+        run: .github/scripts/bootstrap_dev_env.sh
+
+      # The mutation gate consumes build/slow-lane/.coverage so mutmut can
+      # target covered lines without re-collecting coverage in-process, which
+      # crashes on C-extension reimports (numpy) and, with relative_files=true,
+      # yields no covered lines at all.
+      - name: Collect baseline coverage for mutation chunks
+        if: steps.python-targets.outputs.has_python == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run coverage run -m pytest tests -vv --tb=long --showlocals
+          uv run coverage combine || true
+          test -s build/slow-lane/.coverage
+
       - name: Upload mutation inputs
         uses: actions/upload-artifact@v4
         with:
           name: mutation-inputs
           path: build/slow-lane/
           if-no-files-found: error
+          include-hidden-files: true
 
   language-mutation-matrix:
     name: Language Mutation Chunk ${{ matrix.chunk }}

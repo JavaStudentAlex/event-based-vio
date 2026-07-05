@@ -45,6 +45,8 @@ ALSO_COPY = [
     Path("pyproject.toml"),
     Path("README.md"),
     Path("src"),
+    Path("scripts"),
+    Path("examples"),
 ]
 
 CHUNK_INDEX_ENV = "LANGUAGE_MUTATION_CHUNK_INDEX"
@@ -335,11 +337,25 @@ def print_results() -> None:
 
 
 def warm_imports() -> None:
-    """Hook for project-specific import warmups.
+    """Pre-load binary dependencies before mutmut snapshots ``sys.modules``.
 
-    Keep this empty unless a future runtime dependency needs eager import setup
-    inside mutmut's worker process.
+    When no cached coverage file exists, mutmut collects coverage by running
+    pytest in-process and afterwards unloads every module imported during that
+    run. C-extension modules such as numpy cannot be re-initialised in the same
+    process, so the following stats run crashes with "cannot load module more
+    than once per process". Importing them here puts them in mutmut's snapshot
+    so they survive the unload. These libraries are never mutation targets.
     """
+    import cv2  # noqa: F401
+    import h5py  # noqa: F401
+    import matplotlib.pyplot  # noqa: F401
+    import numpy.testing  # noqa: F401
+    import pandas  # noqa: F401
+    import PIL  # noqa: F401
+    import pyproj  # noqa: F401
+    import scipy  # noqa: F401
+    import shapely  # noqa: F401
+    import sklearn  # noqa: F401
 
 
 def normalize_src_module_name(name: str) -> str:
