@@ -1,21 +1,7 @@
 name: ci-language-mutation
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '**/*.py'
-      - 'pyproject.toml'
-      - 'uv.lock'
-  pull_request:
-    branches: [main]
-    paths:
-      - '**/*.py'
-      - 'pyproject.toml'
-      - 'uv.lock'
   workflow_dispatch:
-  schedule:
-    - cron: "17 3 * * *"
 
 permissions:
   contents: read

@@ -1,14 +1,6 @@
 name: ci-gherkin-mutation
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '**/*.feature'
-  pull_request:
-    branches: [main]
-    paths:
-      - '**/*.feature'
   workflow_dispatch:
 
 permissions:
