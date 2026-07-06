@@ -12,7 +12,7 @@
 
 ## Slices
 
-- [ ] **S01: Extrinsics-aware Event+IMU Correction** `risk:high` `depends:[]`
+- [x] **S01: Extrinsics-aware Event+IMU Correction** `risk:high` `depends:[]`
   > After this: After this: EventImuBackend uses calibrated IMU-to-camera rotation from MVSEC calibration data to transform event-derived displacements into the body frame; synthetic tests prove extrinsics path works correctly and existing tests still pass
 
 - [ ] **S02: Cross-method Artifact Schema Validation** `risk:medium` `depends:[S01]`
