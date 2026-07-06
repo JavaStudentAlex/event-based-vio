@@ -199,29 +199,29 @@ def _bounded_correction(innovation: np.ndarray, confidence: float, config: Event
     return correction
 
 
-
-def _extrinsics_rotation_from_calibration(calibration: Calibration) -> tuple[Rotation | None, str | None]:
-    if not calibration.imu_cam_transform_available or "T_imu_cam" not in calibration.data:
-        return None, None
-
-    T = calibration.data["T_imu_cam"]
-    try:
-        T = np.asarray(T, dtype=np.float64).reshape(4, 4)
-    except Exception:
-        return None, "malformed_shape"
-
-    R = T[:3, :3]
+def _validate_rotation_matrix(R: np.ndarray) -> tuple[Rotation | None, str | None]:
     if not np.all(np.isfinite(R)):
         return None, "non_finite_elements"
 
-    det = np.linalg.det(R)
-    if abs(det - 1.0) >= 1e-4:
+    if abs(np.linalg.det(R) - 1.0) >= 1e-4:
         return None, "degenerate_determinant"
 
     # T_imu_cam transforms FROM imu TO camera.
     # We want to transform event displacements in camera frame TO body frame.
     # Therefore, we want the inverse of this rotation.
     return Rotation.from_matrix(R).inv(), None
+
+
+def _extrinsics_rotation_from_calibration(calibration: Calibration) -> tuple[Rotation | None, str | None]:
+    if not calibration.imu_cam_transform_available or "T_imu_cam" not in calibration.data:
+        return None, None
+
+    try:
+        T = np.asarray(calibration.data["T_imu_cam"], dtype=np.float64).reshape(4, 4)
+    except Exception:
+        return None, "malformed_shape"
+
+    return _validate_rotation_matrix(T[:3, :3])
 
 
 def _event_world_displacement(
@@ -279,7 +279,9 @@ def _pair_cue(
         cue.reason = "low_confidence"
         return cue
 
-    displacement_event = _event_world_displacement(estimate, t_start, t_end, imu, imu_trajectory, focal_px, config, cam_to_body)
+    displacement_event = _event_world_displacement(
+        estimate, t_start, t_end, imu, imu_trajectory, focal_px, config, cam_to_body
+    )
     innovation = displacement_event - _imu_displacement(imu_trajectory, t_start, t_end)
     if not np.all(np.isfinite(innovation)):
         cue.confidence = 0.0

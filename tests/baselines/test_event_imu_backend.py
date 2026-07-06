@@ -247,11 +247,7 @@ class TestExtrinsicsCorrection:
         angle = np.pi / 4
         c, s = np.cos(angle), np.sin(angle)
         T = np.eye(4)
-        T[:3, :3] = np.array([
-            [c, -s, 0],
-            [s,  c, 0],
-            [0,  0, 1]
-        ])
+        T[:3, :3] = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
         sequence_rotated.calibration.data["T_imu_cam"] = T
 
         backend_identity = EventImuBackend()
