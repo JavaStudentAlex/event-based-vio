@@ -25,7 +25,7 @@ from scipy.spatial.transform import Rotation
 from nav_benchmark.baselines.base import BaseOdometryBackend, EstimatorRunResult
 from nav_benchmark.baselines.common import health_from_confidence, latency_per_sample_ms
 from nav_benchmark.baselines.imu import ImuOnlyBackend, ImuOnlyConfig
-from nav_benchmark.datasets.mvsec import MvsecSequence
+from nav_benchmark.datasets.mvsec import Calibration, MvsecSequence
 from nav_benchmark.events.representations import ensure_event_frames
 from nav_benchmark.events.shift import ShiftEstimate, estimate_frame_shift
 from nav_benchmark.trajectory.models import PoseHealth, Trajectory
@@ -199,6 +199,31 @@ def _bounded_correction(innovation: np.ndarray, confidence: float, config: Event
     return correction
 
 
+
+def _extrinsics_rotation_from_calibration(calibration: Calibration) -> tuple[Rotation | None, str | None]:
+    if not calibration.imu_cam_transform_available or "T_imu_cam" not in calibration.data:
+        return None, None
+
+    T = calibration.data["T_imu_cam"]
+    try:
+        T = np.asarray(T, dtype=np.float64).reshape(4, 4)
+    except Exception:
+        return None, "malformed_shape"
+
+    R = T[:3, :3]
+    if not np.all(np.isfinite(R)):
+        return None, "non_finite_elements"
+
+    det = np.linalg.det(R)
+    if abs(det - 1.0) >= 1e-4:
+        return None, "degenerate_determinant"
+
+    # T_imu_cam transforms FROM imu TO camera.
+    # We want to transform event displacements in camera frame TO body frame.
+    # Therefore, we want the inverse of this rotation.
+    return Rotation.from_matrix(R).inv(), None
+
+
 def _event_world_displacement(
     estimate: ShiftEstimate,
     t_start: float,
@@ -207,6 +232,7 @@ def _event_world_displacement(
     imu_trajectory: Trajectory,
     focal_px: float,
     config: EventImuConfig,
+    cam_to_body: Rotation | None = None,
 ) -> np.ndarray:
     dt = t_end - t_start
     shift = estimate.shift_px
@@ -215,10 +241,12 @@ def _event_world_displacement(
         shift = shift - _rotational_flow_px(omega, focal_px, dt)
 
     velocity_cam = _camera_velocity_from_shift(shift, focal_px, config.assumed_scene_depth_m, dt)
+    velocity_body = cam_to_body.apply(velocity_cam) if cam_to_body is not None else velocity_cam
+
     rotation_world_body = _orientation_at(
         imu_trajectory.timestamps, imu_trajectory.orientations, 0.5 * (t_start + t_end)
     )
-    return rotation_world_body.apply(velocity_cam) * dt
+    return rotation_world_body.apply(velocity_body) * dt
 
 
 def _imu_displacement(imu_trajectory: Trajectory, t_start: float, t_end: float) -> np.ndarray:
@@ -242,6 +270,7 @@ def _pair_cue(
     imu_trajectory: Trajectory,
     focal_px: float,
     config: EventImuConfig,
+    cam_to_body: Rotation | None = None,
 ) -> _PairCue:
     cue = _PairCue(t_start=t_start, t_end=t_end, confidence=estimate.confidence, reason=estimate.reason)
     if not estimate.valid or t_end - t_start <= 0.0:
@@ -250,7 +279,7 @@ def _pair_cue(
         cue.reason = "low_confidence"
         return cue
 
-    displacement_event = _event_world_displacement(estimate, t_start, t_end, imu, imu_trajectory, focal_px, config)
+    displacement_event = _event_world_displacement(estimate, t_start, t_end, imu, imu_trajectory, focal_px, config, cam_to_body)
     innovation = displacement_event - _imu_displacement(imu_trajectory, t_start, t_end)
     if not np.all(np.isfinite(innovation)):
         cue.confidence = 0.0
@@ -322,6 +351,7 @@ def _build_cues(
     imu_trajectory: Trajectory,
     focal_px: float,
     config: EventImuConfig,
+    cam_to_body: Rotation | None = None,
 ) -> list[_PairCue]:
     return [
         _pair_cue(
@@ -332,6 +362,7 @@ def _build_cues(
             imu_trajectory,
             focal_px,
             config,
+            cam_to_body,
         )
         for i in range(1, len(frame_t))
     ]
@@ -380,7 +411,7 @@ def _diagnostics_summary(
     covered: np.ndarray,
     imu_t: np.ndarray,
     focal_px: float,
-) -> dict[str, float | int]:
+) -> dict[str, float | int | str | bool]:
     applied_count, invalid_count = _cue_counts(cues)
     mean_confidence = float(np.mean([cue.confidence for cue in cues])) if cues else 0.0
     return {
@@ -409,7 +440,7 @@ class EventImuBackend(BaseOdometryBackend):
     required_streams = ("imu", "event_frames")
 
     def __init__(self) -> None:
-        self.diagnostics: dict[str, float | int] = {}
+        self.diagnostics: dict[str, float | int | str | bool] = {}
 
     def run(self, sequence: MvsecSequence, *, config: EventImuConfig | None = None) -> Trajectory:
         cfg = _event_imu_config(config)
@@ -423,7 +454,17 @@ class EventImuBackend(BaseOdometryBackend):
         frames, frame_t = _require_event_frames(sequence, cfg)
         focal_px = _resolve_focal_length_px(sequence, cfg)
 
-        cues = _build_cues(frames, frame_t, imu, imu_trajectory, focal_px, cfg)
+        cam_to_body, rejected_reason = _extrinsics_rotation_from_calibration(sequence.calibration)
+        if cam_to_body is not None:
+            self.diagnostics["extrinsics_applied"] = True
+            self.diagnostics["extrinsics_source"] = "calibration"
+        else:
+            self.diagnostics["extrinsics_applied"] = False
+            self.diagnostics["extrinsics_source"] = "identity_fallback"
+            if rejected_reason:
+                self.diagnostics["extrinsics_rejected_reason"] = rejected_reason
+
+        cues = _build_cues(frames, frame_t, imu, imu_trajectory, focal_px, cfg, cam_to_body)
 
         imu_t = np.asarray(imu_trajectory.timestamps, dtype=np.float64)
         offsets = _accumulated_offsets(imu_t, cues)
@@ -436,7 +477,7 @@ class EventImuBackend(BaseOdometryBackend):
 
         confidence = np.clip(cfg.base_imu_confidence + cfg.event_confidence_weight * event_confidence, 0.0, 1.0)
         health = _merged_health(confidence, imu_trajectory, corrected, imu_t, cfg)
-        self.diagnostics = _diagnostics_summary(cues, frame_t, covered, imu_t, focal_px)
+        self.diagnostics.update(_diagnostics_summary(cues, frame_t, covered, imu_t, focal_px))
 
         return Trajectory(
             timestamps=imu_trajectory.timestamps,

@@ -222,3 +222,78 @@ class TestDiagnostics:
         backend = EventImuBackend()
         backend.run(sequence, config=EventImuConfig(imu_config=ImuOnlyConfig()))
         assert backend.diagnostics["focal_length_px"] == 200.0
+
+
+class TestExtrinsicsCorrection:
+    def test_extrinsics_rotation_changes_correction(self):
+        # We need the frames to induce a non-zero shift.
+        # A static scene but with imu drift creates a shift,
+        # but maybe the shift isn't large enough or is along an axis not affected by R_z.
+        # Let's manually inject frames that have a clear shift.
+        base = _textured_frame()
+        frames = [base]
+        for i in range(1, 40):
+            # shift the frame by 2 pixels right each time
+            shifted = np.roll(base, 2 * i, axis=1)
+            frames.append(shifted)
+        frames = np.array(frames)
+
+        sequence_identity = _static_scene_sequence(accel_bias_x=5.0, frames=frames)
+        sequence_rotated = _static_scene_sequence(accel_bias_x=5.0, frames=frames)
+        sequence_rotated.calibration.imu_cam_transform_available = True
+
+        # 45 degree rotation around Z, from IMU to camera
+        # R_z(45)
+        angle = np.pi / 4
+        c, s = np.cos(angle), np.sin(angle)
+        T = np.eye(4)
+        T[:3, :3] = np.array([
+            [c, -s, 0],
+            [s,  c, 0],
+            [0,  0, 1]
+        ])
+        sequence_rotated.calibration.data["T_imu_cam"] = T
+
+        backend_identity = EventImuBackend()
+        traj_identity = backend_identity.run(sequence_identity, config=EventImuConfig(imu_config=ImuOnlyConfig()))
+
+        backend_rotated = EventImuBackend()
+        traj_rotated = backend_rotated.run(sequence_rotated, config=EventImuConfig(imu_config=ImuOnlyConfig()))
+
+        # Positions should differ because the shift is rotated into a different body axis
+        # meaning the correction vector is different.
+        diff = np.linalg.norm(traj_identity.positions - traj_rotated.positions)
+        assert diff > 1e-4
+
+    def test_extrinsics_fallback_to_identity(self):
+        sequence = _static_scene_sequence()
+        sequence.calibration.imu_cam_transform_available = False
+
+        backend = EventImuBackend()
+        backend.run(sequence, config=EventImuConfig(imu_config=ImuOnlyConfig()))
+        assert backend.diagnostics.get("extrinsics_source") == "identity_fallback"
+        assert backend.diagnostics.get("extrinsics_applied") is False
+
+    def test_extrinsics_diagnostics_field(self):
+        sequence = _static_scene_sequence()
+        sequence.calibration.imu_cam_transform_available = True
+        sequence.calibration.data["T_imu_cam"] = np.eye(4)
+
+        backend = EventImuBackend()
+        backend.run(sequence, config=EventImuConfig(imu_config=ImuOnlyConfig()))
+        assert backend.diagnostics.get("extrinsics_source") == "calibration"
+        assert backend.diagnostics.get("extrinsics_applied") is True
+
+    def test_degenerate_extrinsics_rejection(self):
+        sequence = _static_scene_sequence()
+        sequence.calibration.imu_cam_transform_available = True
+        T = np.eye(4)
+        T[0, 0] = 2.0  # det = 2.0, not a valid rotation
+        sequence.calibration.data["T_imu_cam"] = T
+
+        backend = EventImuBackend()
+        backend.run(sequence, config=EventImuConfig(imu_config=ImuOnlyConfig()))
+
+        assert backend.diagnostics.get("extrinsics_source") == "identity_fallback"
+        assert backend.diagnostics.get("extrinsics_applied") is False
+        assert backend.diagnostics.get("extrinsics_rejected_reason") == "degenerate_determinant"
