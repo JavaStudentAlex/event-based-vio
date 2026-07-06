@@ -9,8 +9,8 @@ The difference between that event-derived displacement and the IMU displacement
 is applied as a conservative, norm-bounded position correction.
 
 Deliberate M002 simplifications (documented, revisable):
-- The camera frame is assumed to coincide with the IMU/body frame (the MVSEC
-  DAVIS IMU is mounted on the camera).
+- Camera-to-IMU/body extrinsics are applied when MVSEC calibration provides
+  ``imu_cam_transform``; otherwise the backend keeps the identity fallback.
 - Scene depth is a single configured constant, so absolute correction scale is
   approximate; the cue mainly bounds drift rather than tracking scale.
 - The event cue corrects position only; orientation stays pure IMU.
@@ -134,7 +134,7 @@ def _extrinsics_rotation_from_calibration(calibration: Calibration) -> tuple[Rot
 
     try:
         matrix = np.asarray(transform, dtype=np.float64).reshape(4, 4)
-    except ValueError:
+    except (TypeError, ValueError):
         return None, "transform_shape_invalid"
 
     rotation_matrix = matrix[:3, :3]
@@ -142,7 +142,8 @@ def _extrinsics_rotation_from_calibration(calibration: Calibration) -> tuple[Rot
         return None, "non_finite_elements"
 
     det = np.linalg.det(rotation_matrix)
-    if abs(det - 1.0) >= 1e-4:
+    should_be_identity = rotation_matrix.T @ rotation_matrix
+    if abs(det - 1.0) >= 1e-4 or not np.allclose(should_be_identity, np.eye(3), atol=1e-4):
         return None, "degenerate_or_not_rotation"
 
     # matrix transforms FROM IMU TO camera.
@@ -457,13 +458,17 @@ class EventImuBackend(BaseOdometryBackend):
 
         cam_to_body, rejected_reason = _extrinsics_rotation_from_calibration(sequence.calibration)
         if cam_to_body is not None:
-            self.diagnostics["extrinsics_applied"] = True
-            self.diagnostics["extrinsics_source"] = "calibration"
+            extrinsics_diagnostics: dict[str, float | int | str | bool] = {
+                "extrinsics_applied": True,
+                "extrinsics_source": "calibration",
+            }
         else:
-            self.diagnostics["extrinsics_applied"] = False
-            self.diagnostics["extrinsics_source"] = "identity_fallback"
+            extrinsics_diagnostics = {
+                "extrinsics_applied": False,
+                "extrinsics_source": "identity_fallback",
+            }
             if rejected_reason is not None:
-                self.diagnostics["extrinsics_rejected_reason"] = rejected_reason
+                extrinsics_diagnostics["extrinsics_rejected_reason"] = rejected_reason
 
         cues = _build_cues(frames, frame_t, imu, imu_trajectory, focal_px, cfg, cam_to_body)
 
@@ -478,6 +483,7 @@ class EventImuBackend(BaseOdometryBackend):
 
         confidence = np.clip(cfg.base_imu_confidence + cfg.event_confidence_weight * event_confidence, 0.0, 1.0)
         health = _merged_health(confidence, imu_trajectory, corrected, imu_t, cfg)
+        self.diagnostics = dict(extrinsics_diagnostics)
         self.diagnostics.update(_diagnostics_summary(cues, frame_t, covered, imu_t, focal_px))
 
         return Trajectory(
