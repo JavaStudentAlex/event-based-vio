@@ -48,9 +48,19 @@ ROS stack.
 | `tqdm` | Progress bars for replay and evaluation |
 | `rich` | Readable terminal logging and debugging |
 | `scikit-learn` | Later ensemble gating, calibration, and lightweight fusion experiments |
+| `torch` | PPO gating policy and JEPA scene model for the learned ensemble (CUDA when available, CPU fallback) |
 
 Raw datasets, extracted MVSEC files, generated trajectories, plots, local
 caches, and virtual environments should stay untracked.
+
+## Learned Ensemble (RL + JEPA)
+
+Beyond the deterministic fusion modes, `--fusion rl_gated` runs a PPO-trained
+trust-gating policy over the weighted EKF, optionally informed by JEPA
+perception signals (built-in JEPA-lite or precomputed embeddings from
+open-source pretrained JEPA models). Training entry points are the
+`train-jepa` and `train-rl` subcommands; design, guarantees, and end-to-end
+commands are documented in `docs/rl-ensemble.md`.
 
 ## Dataset Download
 

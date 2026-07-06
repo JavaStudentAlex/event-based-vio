@@ -145,12 +145,15 @@ def _gate_measurement(
     state_time: float,
     last_accepted_time: float,
     config: EkfFusionConfig,
+    *,
+    sigma: float | None = None,
 ) -> _GateOutcome:
     decision = _pre_update_gates(measurement, state_time, config)
     if not decision.accepted:
         return _GateOutcome(decision=decision)
 
-    sigma = _measurement_sigma(measurement, config)
+    if sigma is None:
+        sigma = _measurement_sigma(measurement, config)
     innovation, S = ekf.innovation(measurement.position, sigma)
     innovation_norm = float(np.linalg.norm(innovation))
 

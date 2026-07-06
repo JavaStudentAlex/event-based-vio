@@ -398,10 +398,70 @@ def _write_status_timeline(args, baselines: dict, trajectory: Trajectory, run_di
         print(f"Warning: failed to write backend status timeline: {plot_err}", file=sys.stderr)
 
 
+def _jepa_series_for_run(args, sequence: MvsecSequence, imu_config: ImuOnlyConfig):
+    """Build the JEPA observation series from either a local checkpoint or external embeddings."""
+    jepa_checkpoint = getattr(args, "jepa", None)
+    embeddings_rgb = getattr(args, "jepa_embeddings_rgb", None)
+    embeddings_events = getattr(args, "jepa_embeddings_events", None)
+    if jepa_checkpoint:
+        from nav_benchmark.jepa.model import JepaModel
+        from nav_benchmark.jepa.signals import obs_series_for_sequence
+
+        model = JepaModel.load(jepa_checkpoint)
+        return obs_series_for_sequence(model, sequence, gravity=imu_config.gravity)
+    if embeddings_rgb or embeddings_events:
+        from nav_benchmark.jepa.external import obs_series_from_files
+
+        return obs_series_from_files(embeddings_rgb, embeddings_events)
+    return None
+
+
+def _run_rl_gated_ensemble(args, sequence: MvsecSequence, baselines: dict, imu_config: ImuOnlyConfig, run_dir):
+    from nav_benchmark.ensemble.ekf import EkfConfig
+    from nav_benchmark.ensemble.rl_gated import RlGatedFusionConfig
+    from nav_benchmark.rl.ppo import PpoAgent
+    from nav_benchmark.rl.runner import restore_policy_configs, run_rl_gated_fusion, write_trust_log_csv
+
+    agent = PpoAgent.load(args.policy)
+    _features, control_period_sec, min_trust = restore_policy_configs(agent)
+    imu = _require_sequence_imu(sequence)
+    measurements = {method: trajectory for method, trajectory in baselines.items() if method != "imu_only"}
+    fusion_config = RlGatedFusionConfig(
+        base=EkfFusionConfig(ekf=EkfConfig(gravity=imu_config.gravity)),
+        control_period_sec=control_period_sec,
+        min_trust_to_apply=min_trust,
+    )
+    trajectory, records, trust_log = run_rl_gated_fusion(
+        imu,
+        measurements,
+        agent,
+        fusion_config=fusion_config,
+        initial_position=imu_config.initial_position,
+        initial_velocity=imu_config.initial_velocity,
+        initial_orientation_xyzw=imu_config.initial_orientation,
+        jepa_series=_jepa_series_for_run(args, sequence, imu_config),
+    )
+    if run_dir is not None:
+        write_update_log_csv(records, run_dir / "ensemble_updates.csv")
+        write_update_log_csv(records, run_dir / "rejected_updates.csv", only_rejected=True)
+        write_trust_log_csv(trust_log, run_dir / "rl_trust_log.csv")
+    config = {
+        "policy": str(args.policy),
+        "policy_metadata": {**agent.feature_metadata, **agent.extra_metadata},
+        "jepa": getattr(args, "jepa", None),
+        "jepa_embeddings_rgb": getattr(args, "jepa_embeddings_rgb", None),
+        "jepa_embeddings_events": getattr(args, "jepa_embeddings_events", None),
+        "fusion": fusion_config,
+    }
+    return trajectory, config
+
+
 def _fuse_ensemble(args, sequence: MvsecSequence, baselines: dict, imu_config: ImuOnlyConfig, run_dir: Path | None):
     fusion_mode = getattr(args, "fusion", "confidence_weighted")
     if fusion_mode == "weighted_ekf":
         return _run_ekf_ensemble(sequence, baselines, imu_config, run_dir)
+    if fusion_mode == "rl_gated":
+        return _run_rl_gated_ensemble(args, sequence, baselines, imu_config, run_dir)
     if fusion_mode == "winner_takes_healthy":
         wth_config = WinnerTakesHealthyConfig()
         return run_winner_takes_healthy(baselines, config=wth_config), wth_config
@@ -658,9 +718,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument(
         "--fusion",
-        choices=["confidence_weighted", "weighted_ekf", "winner_takes_healthy"],
+        choices=["confidence_weighted", "weighted_ekf", "winner_takes_healthy", "rl_gated"],
         default="confidence_weighted",
         help="Fusion mode used when --method is 'ensemble'",
+    )
+    run_parser.add_argument(
+        "--policy",
+        help="Trained PPO gating policy checkpoint (.pt); required for --fusion rl_gated",
+    )
+    run_parser.add_argument(
+        "--jepa",
+        help="JEPA checkpoint (.pt) providing perception features for a JEPA-trained policy",
+    )
+    run_parser.add_argument(
+        "--jepa-embeddings-rgb",
+        help="Precomputed RGB frame embeddings (HDF5/NPZ) from an external pretrained JEPA model",
+    )
+    run_parser.add_argument(
+        "--jepa-embeddings-events",
+        help="Precomputed event-frame embeddings (HDF5/NPZ) from an external pretrained JEPA model",
     )
     run_parser.add_argument(
         "--external-trajectory",
@@ -807,6 +883,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Window length in milliseconds used when event frames are built from raw events",
     )
 
+    _add_train_rl_parser(subparsers)
+    _add_train_jepa_parser(subparsers)
+
     # Subcommand 'validate'
     validate_parser = subparsers.add_parser("validate", help="Validate run directory artifacts and consistency")
     validate_parser.add_argument(
@@ -837,6 +916,114 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Root directory where run folders are stored (used with --latest)",
     )
     return parser
+
+
+def _add_train_common_args(parser) -> None:
+    parser.add_argument("--dataset", required=True, choices=["synthetic", "mvsec"], help="Dataset type")
+    parser.add_argument(
+        "--input",
+        action="append",
+        required=True,
+        dest="inputs",
+        help="Training sequence input (synthetic dir or MVSEC HDF5); repeatable",
+    )
+    parser.add_argument(
+        "--sequence",
+        action="append",
+        dest="sequences",
+        default=[],
+        help="Sequence name aligned with each --input (optional, repeatable)",
+    )
+    parser.add_argument("--seed", type=int, default=0, help="Global training seed")
+    parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"], help="Torch device")
+    parser.add_argument(
+        "--event-window-ms",
+        type=float,
+        default=50.0,
+        help="Window length in milliseconds for event frames built from raw events",
+    )
+
+
+def _add_train_rl_parser(subparsers) -> None:
+    parser = subparsers.add_parser("train-rl", help="Train the PPO gating policy for the RL-gated ensemble")
+    _add_train_common_args(parser)
+    parser.add_argument("--output-dir", required=True, help="Directory for checkpoints, logs, and the report")
+    parser.add_argument("--jepa", help="JEPA checkpoint whose signals become policy observation features")
+    parser.add_argument("--window-sec", type=float, default=8.0, help="Episode window length in seconds")
+    parser.add_argument("--stride-sec", type=float, default=4.0, help="Stride between episode windows in seconds")
+    parser.add_argument("--control-period-ms", type=float, default=100.0, help="Policy decision period")
+    parser.add_argument("--iterations", type=int, default=60, help="PPO iterations")
+    parser.add_argument("--steps-per-iteration", type=int, default=2048, help="Transitions per PPO update")
+    parser.add_argument("--eval-every", type=int, default=5, help="Evaluate the policy every N iterations")
+    parser.add_argument("--eval-holdout", type=int, default=4, help="Hold out every Nth window for evaluation")
+    parser.add_argument("--initial-severity", type=int, default=1, help="Starting perturbation curriculum level")
+    parser.add_argument("--max-severity", type=int, default=3, help="Maximum perturbation curriculum level")
+    parser.add_argument("--patience-evals", type=int, default=4, help="Early stop after N evals without improvement")
+    parser.add_argument("--lr", type=float, default=3e-4, help="PPO learning rate")
+    parser.add_argument("--entropy-coef", type=float, default=1e-3, help="PPO entropy bonus coefficient")
+
+
+def _add_train_jepa_parser(subparsers) -> None:
+    parser = subparsers.add_parser("train-jepa", help="Self-supervised JEPA pretraining on sequence frames")
+    _add_train_common_args(parser)
+    parser.add_argument("--output", required=True, help="Path of the JEPA checkpoint to write (.pt)")
+    parser.add_argument("--streams", choices=["both", "rgb", "events"], default="both", help="Frame streams to use")
+    parser.add_argument("--steps", type=int, default=500, help="Training steps")
+    parser.add_argument("--batch-size", type=int, default=64, help="Frame pairs per step")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--embed-dim", type=int, default=32, help="Frame embedding dimension")
+    parser.add_argument("--hidden-dim", type=int, default=64, help="Encoder/predictor hidden width")
+
+
+def _handle_train_rl_command(args, parser: argparse.ArgumentParser) -> None:
+    from nav_benchmark.rl.train import TrainRlSpec, run_training
+
+    spec = TrainRlSpec(
+        dataset=args.dataset,
+        inputs=[Path(p) for p in args.inputs],
+        output_dir=Path(args.output_dir),
+        jepa_checkpoint=Path(args.jepa) if args.jepa else None,
+        window_sec=args.window_sec,
+        stride_sec=args.stride_sec,
+        control_period_sec=args.control_period_ms / 1000.0,
+        eval_holdout=args.eval_holdout,
+        iterations=args.iterations,
+        steps_per_iteration=args.steps_per_iteration,
+        eval_every=args.eval_every,
+        initial_severity=args.initial_severity,
+        max_severity=args.max_severity,
+        patience_evals=args.patience_evals,
+        seed=args.seed,
+        device=args.device,
+        event_window_ms=args.event_window_ms,
+        lr=args.lr,
+        entropy_coef=args.entropy_coef,
+        sequence_names=list(args.sequences),
+    )
+    report = run_training(spec)
+    print(f"Best held-out improvement over weighted EKF: {report['best_improvement']:+.3f}")
+
+
+def _handle_train_jepa_command(args, parser: argparse.ArgumentParser) -> None:
+    from nav_benchmark.jepa.train import JepaTrainSpec, run_jepa_training
+
+    spec = JepaTrainSpec(
+        dataset=args.dataset,
+        inputs=[Path(p) for p in args.inputs],
+        output=Path(args.output),
+        streams=args.streams,
+        steps=args.steps,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        embed_dim=args.embed_dim,
+        hidden_dim=args.hidden_dim,
+        seed=args.seed,
+        device=args.device,
+        event_window_ms=args.event_window_ms,
+        sequence_names=list(args.sequences),
+    )
+    summary = run_jepa_training(spec)
+    print(f"JEPA final loss {summary['final_loss_mean']:.4f} over {summary['pair_count']} pairs")
 
 
 def _next_resume_dir(run_dir: Path, dir_name: str) -> Path:
@@ -930,11 +1117,17 @@ def _log_event_stream_health(event_diagnostics: EventStreamDiagnostics | None, l
         )
 
 
+_REQUIRED_RUN_ARGUMENTS: tuple[tuple[str, str, str, str], ...] = (
+    ("dataset", "mvsec", "input", "--input is required when --dataset is 'mvsec'"),
+    ("method", "external", "external_trajectory", "--external-trajectory is required when --method is 'external'"),
+    ("fusion", "rl_gated", "policy", "--policy is required when --fusion is 'rl_gated'"),
+)
+
+
 def _validate_run_args(args, parser: argparse.ArgumentParser) -> None:
-    if args.dataset == "mvsec" and not args.input:
-        parser.error("--input is required when --dataset is 'mvsec'")
-    if args.method == "external" and not args.external_trajectory:
-        parser.error("--external-trajectory is required when --method is 'external'")
+    for selector_name, selector_value, required_name, error_message in _REQUIRED_RUN_ARGUMENTS:
+        if getattr(args, selector_name, None) == selector_value and not getattr(args, required_name, None):
+            parser.error(error_message)
 
 
 def _execute_run(args, run_dir: Path, log_message) -> None:
@@ -1202,6 +1395,8 @@ def main() -> None:
         "validate": _handle_validate_command,
         "compare": _handle_compare_command,
         "convert": _handle_convert_command,
+        "train-rl": _handle_train_rl_command,
+        "train-jepa": _handle_train_jepa_command,
     }
     handlers[args.command](args, parser)
 

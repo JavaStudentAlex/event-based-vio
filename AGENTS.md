@@ -63,6 +63,8 @@ set:
 - `rich`: readable terminal logging and debug output
 - `scikit-learn`: later ensemble gating, calibration, and lightweight fusion
   experiments
+- `torch`: PPO gating policy and JEPA scene model for the learned ensemble
+  (`--fusion rl_gated`; CUDA when available, CPU fallback)
 
 ## Required Trajectory Output
 
