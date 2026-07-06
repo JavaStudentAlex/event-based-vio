@@ -66,5 +66,5 @@ The current `_event_world_displacement` assumes camera frame equals body frame �
 
 ## Open Questions
 
-- **Rotation application order:** The inverse rotation `R_imu_cam.T` should be applied to the camera-frame velocity *before* the world-body rotation. Verify this matches the MVSEC coordinate convention during implementation — current thinking is `v_body = R_cam_to_imu @ v_cam` then `v_world = R_world_body @ v_body`.
-- **`T_imu_cam` shape in real MVSEC data:** The loader may store this as a flat array or a 4×4 matrix. The helper should handle reshaping — current thinking is `np.asarray(data).reshape(4, 4)` with a shape guard.
+- **Rotation application order:** The inverse rotation `R_imu_cam.T` should be applied to the camera-frame velocity *before* the world-body rotation. Verify this matches the MVSEC coordinate convention during implementation — current thinking is `v_body = R_cam_to_imu @ v_cam` then `v_world = R_world_body @ v_body`. (Resolved: Yes, `cam_to_body` is derived from the transposed 3x3 block of `T_imu_cam` and applied to `velocity_cam` before `rotation_world_body`.)
+- **`T_imu_cam` shape in real MVSEC data:** The loader may store this as a flat array or a 4×4 matrix. The helper should handle reshaping — current thinking is `np.asarray(data).reshape(4, 4)` with a shape guard. (Resolved: Yes, used `.reshape(4, 4)` inside a `try...except ValueError` block to handle malformed shapes gracefully.)
