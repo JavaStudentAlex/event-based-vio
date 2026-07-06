@@ -125,6 +125,21 @@ def _imu_config_for_event_run(config: EventImuConfig, sequence: MvsecSequence) -
     return config.imu_config if config.imu_config is not None else _default_imu_config_from_sequence(sequence)
 
 
+def _rotation_matrix_rejected_reason(rotation_matrix: np.ndarray) -> str | None:
+    if not np.all(np.isfinite(rotation_matrix)):
+        return "non_finite_elements"
+
+    det = np.linalg.det(rotation_matrix)
+    if abs(det - 1.0) >= 1e-4:
+        return "degenerate_or_not_rotation"
+
+    should_be_identity = rotation_matrix.T @ rotation_matrix
+    if not np.allclose(should_be_identity, np.eye(3), atol=1e-4):
+        return "degenerate_or_not_rotation"
+
+    return None
+
+
 def _extrinsics_rotation_from_calibration(calibration: Calibration) -> tuple[Rotation | None, str | None]:
     if not calibration.imu_cam_transform_available:
         return None, None
@@ -138,13 +153,9 @@ def _extrinsics_rotation_from_calibration(calibration: Calibration) -> tuple[Rot
         return None, "transform_shape_invalid"
 
     rotation_matrix = matrix[:3, :3]
-    if not np.all(np.isfinite(rotation_matrix)):
-        return None, "non_finite_elements"
-
-    det = np.linalg.det(rotation_matrix)
-    should_be_identity = rotation_matrix.T @ rotation_matrix
-    if abs(det - 1.0) >= 1e-4 or not np.allclose(should_be_identity, np.eye(3), atol=1e-4):
-        return None, "degenerate_or_not_rotation"
+    rejected_reason = _rotation_matrix_rejected_reason(rotation_matrix)
+    if rejected_reason is not None:
+        return None, rejected_reason
 
     # matrix transforms FROM IMU TO camera.
     # We want cam_to_body, so we transpose/invert the 3x3 block.
