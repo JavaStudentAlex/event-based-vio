@@ -16,7 +16,7 @@ from nav_benchmark.datasets.loading import default_gravity, load_sequence
 from nav_benchmark.events import ensure_event_frames
 from nav_benchmark.jepa.frames import ego_motion_features, stack_frame_patches
 from nav_benchmark.jepa.model import JepaConfig, JepaModel, build_pair_dataset, train_jepa
-from nav_benchmark.jepa.signals import imu_reference_trajectory
+from nav_benchmark.jepa.signals import imu_reference_trajectory, stream_arrays_for_sequence
 
 STREAM_CHOICES = ("both", "rgb", "events")
 
@@ -53,16 +53,6 @@ def _selected_streams(spec: JepaTrainSpec) -> tuple[str, ...]:
     return (spec.streams,)
 
 
-def _stream_arrays(sequence, stream: str) -> tuple[np.ndarray, np.ndarray] | None:
-    if stream == "rgb":
-        frames, times = sequence.images, sequence.image_timestamps
-    else:
-        frames, times = sequence.event_frames, sequence.event_frame_timestamps
-    if frames is None or times is None or len(frames) < 2:
-        return None
-    return np.asarray(frames), np.asarray(times, dtype=np.float64)
-
-
 def _collect_segments(spec: JepaTrainSpec, log) -> tuple[list[tuple[np.ndarray, np.ndarray]], list[str]]:
     segments: list[tuple[np.ndarray, np.ndarray]] = []
     used: list[str] = []
@@ -73,7 +63,7 @@ def _collect_segments(spec: JepaTrainSpec, log) -> tuple[list[tuple[np.ndarray, 
         ensure_event_frames(sequence, window_sec=spec.event_window_ms / 1000.0)
         reference = imu_reference_trajectory(sequence, gravity)
         for stream in _selected_streams(spec):
-            arrays = _stream_arrays(sequence, stream)
+            arrays = stream_arrays_for_sequence(sequence, stream)
             if arrays is None:
                 log(f"Sequence {name}: stream '{stream}' unavailable, skipping")
                 continue

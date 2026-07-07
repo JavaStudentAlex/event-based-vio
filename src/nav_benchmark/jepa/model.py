@@ -158,6 +158,68 @@ def build_pair_dataset(segments: list[tuple[np.ndarray, np.ndarray]]) -> tuple[n
     )
 
 
+def _validate_training_pairs(patches_now: np.ndarray, patches_next: np.ndarray, ego: np.ndarray) -> int:
+    pair_count = len(patches_now)
+    if pair_count == 0:
+        raise ValueError("Pair arrays must be non-empty and of equal length")
+    if pair_count != len(patches_next) or pair_count != len(ego):
+        raise ValueError("Pair arrays must be non-empty and of equal length")
+    return pair_count
+
+
+def _training_tensors(
+    patches_now: np.ndarray,
+    patches_next: np.ndarray,
+    ego: np.ndarray,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    return (
+        torch.as_tensor(patches_now, dtype=torch.float32, device=device),
+        torch.as_tensor(patches_next, dtype=torch.float32, device=device),
+        torch.as_tensor(ego, dtype=torch.float32, device=device),
+    )
+
+
+def _trainable_parameters(model: JepaModel):
+    return [parameter for parameter in model.parameters() if parameter.requires_grad]
+
+
+def _sample_batch_indices(
+    rng: np.random.Generator,
+    pair_count: int,
+    batch_size: int,
+    device: torch.device,
+) -> torch.Tensor:
+    indices = rng.integers(0, pair_count, size=min(batch_size, pair_count))
+    return torch.as_tensor(np.asarray(indices), dtype=torch.long, device=device)
+
+
+def _run_training_step(
+    model: JepaModel,
+    optimizer: torch.optim.Optimizer,
+    now_tensor: torch.Tensor,
+    next_tensor: torch.Tensor,
+    ego_tensor: torch.Tensor,
+    idx: torch.Tensor,
+) -> float:
+    loss = model.training_loss(now_tensor[idx], next_tensor[idx], ego_tensor[idx])
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+    model.update_target()
+    return float(loss.item())
+
+
+def _log_training_progress(log, step: int, steps: int, history: list[float]) -> None:
+    if log is None:
+        return
+    cadence = max(steps // 10, 1)
+    if (step + 1) % cadence != 0:
+        return
+    recent = history[-cadence:]
+    log(f"JEPA step {step + 1}/{steps}: loss {sum(recent) / len(recent):.4f}")
+
+
 def train_jepa(
     model: JepaModel,
     patches_now: np.ndarray,
@@ -168,32 +230,20 @@ def train_jepa(
     log=None,
 ) -> list[float]:
     """Self-supervised training over frame pairs; returns the loss history."""
-    if len(patches_now) == 0 or len(patches_now) != len(patches_next) or len(patches_now) != len(ego):
-        raise ValueError("Pair arrays must be non-empty and of equal length")
+    pair_count = _validate_training_pairs(patches_now, patches_next, ego)
     config = model.config
     resolved = resolve_device(device)
     model.to(resolved)
     model.train()
-    now_tensor = torch.as_tensor(patches_now, dtype=torch.float32, device=resolved)
-    next_tensor = torch.as_tensor(patches_next, dtype=torch.float32, device=resolved)
-    ego_tensor = torch.as_tensor(ego, dtype=torch.float32, device=resolved)
-    optimizer = torch.optim.Adam([p for p in model.parameters() if p.requires_grad], lr=config.lr)
+    now_tensor, next_tensor, ego_tensor = _training_tensors(patches_now, patches_next, ego, resolved)
+    optimizer = torch.optim.Adam(_trainable_parameters(model), lr=config.lr)
     rng = np.random.Generator(np.random.PCG64(config.seed))
-    pair_count = len(patches_now)
 
     history: list[float] = []
     for step in range(config.steps):
-        indices = rng.integers(0, pair_count, size=min(config.batch_size, pair_count))
-        idx = torch.as_tensor(np.asarray(indices), dtype=torch.long, device=resolved)
-        loss = model.training_loss(now_tensor[idx], next_tensor[idx], ego_tensor[idx])
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        model.update_target()
-        history.append(float(loss.item()))
-        if log is not None and (step + 1) % max(config.steps // 10, 1) == 0:
-            recent = history[-max(config.steps // 10, 1) :]
-            log(f"JEPA step {step + 1}/{config.steps}: loss {sum(recent) / len(recent):.4f}")
+        idx = _sample_batch_indices(rng, pair_count, config.batch_size, resolved)
+        history.append(_run_training_step(model, optimizer, now_tensor, next_tensor, ego_tensor, idx))
+        _log_training_progress(log, step, config.steps, history)
     model.eval()
     return history
 

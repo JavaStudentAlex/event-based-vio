@@ -60,24 +60,41 @@ def _forward_fill(source_times: np.ndarray, source_values: np.ndarray, target_ti
     return values
 
 
+def _available_streams(rgb: FrameSignals | None, event: FrameSignals | None) -> list[FrameSignals]:
+    streams: list[FrameSignals] = []
+    for stream in (rgb, event):
+        if stream is not None and len(stream.times) > 0:
+            streams.append(stream)
+    return streams
+
+
+def _filled_or_zero(stream: FrameSignals | None, values: np.ndarray | None, target_times: np.ndarray) -> np.ndarray:
+    if stream is None or values is None:
+        return np.zeros(len(target_times), dtype=np.float64)
+    return _forward_fill(stream.times, values, target_times)
+
+
+def _mean_embedding_speed(streams: list[FrameSignals], target_times: np.ndarray) -> np.ndarray:
+    speeds = [_forward_fill(stream.times, stream.embedding_speed, target_times) for stream in streams]
+    return np.mean(np.stack(speeds, axis=0), axis=0)
+
+
 def combine_stream_signals(rgb: FrameSignals | None, event: FrameSignals | None) -> JepaObsSeries:
     """Merge per-stream signals onto one causal time base for observations."""
-    streams = [s for s in (rgb, event) if s is not None and len(s.times) > 0]
+    streams = _available_streams(rgb, event)
     if not streams:
         raise ValueError("At least one non-empty frame stream is required for JEPA signals")
-    times = np.unique(np.concatenate([s.times for s in streams]))
-    rgb_surprise = _forward_fill(rgb.times, rgb.surprise, times) if rgb is not None else np.zeros(len(times))
-    event_surprise = _forward_fill(event.times, event.surprise, times) if event is not None else np.zeros(len(times))
-    speeds = [_forward_fill(s.times, s.embedding_speed, times) for s in streams]
+    times = np.unique(np.concatenate([stream.times for stream in streams]))
     return JepaObsSeries(
         times=times,
-        rgb_surprise=rgb_surprise,
-        event_surprise=event_surprise,
-        embedding_speed=np.mean(np.stack(speeds, axis=0), axis=0),
+        rgb_surprise=_filled_or_zero(rgb, None if rgb is None else rgb.surprise, times),
+        event_surprise=_filled_or_zero(event, None if event is None else event.surprise, times),
+        embedding_speed=_mean_embedding_speed(streams, times),
     )
 
 
-def _sequence_stream(sequence: MvsecSequence, stream: str) -> tuple[np.ndarray, np.ndarray] | None:
+def stream_arrays_for_sequence(sequence: MvsecSequence, stream: str) -> tuple[np.ndarray, np.ndarray] | None:
+    """Return frames and timestamps for one named frame stream, if usable."""
     if stream == "rgb":
         frames, times = sequence.images, sequence.image_timestamps
     else:
@@ -96,8 +113,8 @@ def obs_series_for_sequence(
 ) -> JepaObsSeries:
     """JEPA observation series for a loaded sequence (RGB and/or event frames)."""
     reference = imu_reference_trajectory(sequence, gravity)
-    rgb_stream = _sequence_stream(sequence, "rgb")
-    event_stream = _sequence_stream(sequence, "events")
+    rgb_stream = stream_arrays_for_sequence(sequence, "rgb")
+    event_stream = stream_arrays_for_sequence(sequence, "events")
     rgb = stream_signals(model, rgb_stream[0], rgb_stream[1], reference, device=device) if rgb_stream else None
     event = stream_signals(model, event_stream[0], event_stream[1], reference, device=device) if event_stream else None
     return combine_stream_signals(rgb, event)

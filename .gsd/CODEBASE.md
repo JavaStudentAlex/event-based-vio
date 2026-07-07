@@ -1,7 +1,7 @@
 # Codebase Map
 
-Generated: 2026-07-07T11:21:31Z | Files: 211 | Described: 0/211
-<!-- gsd:codebase-meta {"generatedAt":"2026-07-07T11:21:31Z","fingerprint":"4cdd57351d3bb87fd847b4a09bb27246afefa342","fileCount":211,"truncated":false} -->
+Generated: 2026-07-07T12:21:13Z | Files: 212 | Described: 0/212
+<!-- gsd:codebase-meta {"generatedAt":"2026-07-07T12:21:13Z","fingerprint":"fb027bd881a8d2b7af3157f4f668709c96c60973","fileCount":212,"truncated":false} -->
 
 ### (root)/
 - `.gitignore`
@@ -247,6 +247,7 @@ Generated: 2026-07-07T11:21:31Z | Files: 211 | Described: 0/211
 ### tests/
 - `tests/__init__.py`
 - `tests/conftest.py`
+- `tests/test_cross_method_schema.py`
 - `tests/test_estimator.py`
 - `tests/test_event_processor.py`
 - `tests/test_imu_processor.py`

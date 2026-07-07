@@ -96,6 +96,12 @@ def _rollout_final_error(env: EnsembleFusionEnv, policy=None) -> float:
     return env.final_position_error_m()
 
 
+def _path_string_or_none(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    return str(path)
+
+
 class TrainingHarness:
     """Owns the episode bank, the PPO loop, evaluation gates, and the journal."""
 
@@ -139,36 +145,64 @@ class TrainingHarness:
             model, sequence, gravity=default_gravity(self.spec.dataset), device=self.spec.device
         )
 
-    def _load_episode_bank(self) -> tuple[list[FusionEpisode], list[FusionEpisode]]:
-        episodes: list[FusionEpisode] = []
-        for index, input_path in enumerate(self.spec.inputs):
-            name = self.spec.sequence_names[index] if index < len(self.spec.sequence_names) else Path(input_path).name
-            self.log(f"Loading sequence {name} from {input_path}")
-            sequence = load_sequence(self.spec.dataset, input_path, sequence_name=name)
-            inputs = compute_ensemble_inputs(
-                sequence,
-                event_window_sec=self.spec.event_window_ms / 1000.0,
-                gravity=default_gravity(self.spec.dataset),
-            )
-            jepa_series = self._jepa_series_for(sequence)
-            built = build_episodes(
-                inputs,
-                window_sec=self.spec.window_sec,
-                stride_sec=self.spec.stride_sec,
-                name_prefix=name,
-                jepa_series=jepa_series,
-            )
-            self.log(f"Sequence {name}: {len(built)} episode windows")
-            episodes.extend(built)
-        if not episodes:
-            raise ValueError("No training episodes could be built from the given inputs")
+    def _sequence_name(self, index: int, input_path: Path) -> str:
+        if index < len(self.spec.sequence_names):
+            return self.spec.sequence_names[index]
+        return Path(input_path).name
 
-        train = [ep for i, ep in enumerate(episodes) if (i + 1) % self.spec.eval_holdout != 0]
-        eval_ = [ep for i, ep in enumerate(episodes) if (i + 1) % self.spec.eval_holdout == 0]
+    def _episodes_for_input(self, index: int, input_path: Path) -> list[FusionEpisode]:
+        name = self._sequence_name(index, input_path)
+        self.log(f"Loading sequence {name} from {input_path}")
+        sequence = load_sequence(self.spec.dataset, input_path, sequence_name=name)
+        inputs = compute_ensemble_inputs(
+            sequence,
+            event_window_sec=self.spec.event_window_ms / 1000.0,
+            gravity=default_gravity(self.spec.dataset),
+        )
+        built = build_episodes(
+            inputs,
+            window_sec=self.spec.window_sec,
+            stride_sec=self.spec.stride_sec,
+            name_prefix=name,
+            jepa_series=self._jepa_series_for(sequence),
+        )
+        self.log(f"Sequence {name}: {len(built)} episode windows")
+        return built
+
+    def _is_eval_episode(self, index: int) -> bool:
+        return (index + 1) % self.spec.eval_holdout == 0
+
+    def _partition_episode_bank(self, episodes: list[FusionEpisode]) -> tuple[list[FusionEpisode], list[FusionEpisode]]:
+        train: list[FusionEpisode] = []
+        eval_: list[FusionEpisode] = []
+        for index, episode in enumerate(episodes):
+            if self._is_eval_episode(index):
+                eval_.append(episode)
+            else:
+                train.append(episode)
+        return train, eval_
+
+    def _ensure_episode_split(
+        self, episodes: list[FusionEpisode], train: list[FusionEpisode], eval_: list[FusionEpisode]
+    ) -> tuple[list[FusionEpisode], list[FusionEpisode]]:
         if not eval_:
             eval_ = [episodes[-1]]
         if not train:
             train = list(episodes)
+        return train, eval_
+
+    def _split_episode_bank(self, episodes: list[FusionEpisode]) -> tuple[list[FusionEpisode], list[FusionEpisode]]:
+        train, eval_ = self._partition_episode_bank(episodes)
+        return self._ensure_episode_split(episodes, train, eval_)
+
+    def _load_episode_bank(self) -> tuple[list[FusionEpisode], list[FusionEpisode]]:
+        episodes: list[FusionEpisode] = []
+        for index, input_path in enumerate(self.spec.inputs):
+            episodes.extend(self._episodes_for_input(index, input_path))
+        if not episodes:
+            raise ValueError("No training episodes could be built from the given inputs")
+
+        train, eval_ = self._split_episode_bank(episodes)
         self.log(f"Episode bank: {len(train)} train / {len(eval_)} eval windows")
         return train, eval_
 
@@ -274,68 +308,82 @@ class TrainingHarness:
         self.log(f"Curriculum promoted to severity {self.severity} at iteration {iteration}")
         self._journal({"type": "curriculum", "iteration": iteration, "severity": self.severity})
 
+    def _backend_final_error(self, episode: FusionEpisode, trajectory) -> float | None:
+        if len(trajectory.timestamps) == 0:
+            return None
+        end_position = np.array(
+            [np.interp(episode.t_end, trajectory.timestamps, trajectory.positions[:, axis]) for axis in range(3)]
+        )
+        return float(np.linalg.norm(end_position - episode.gt_positions[-1]))
+
     def _best_single_backend_errors(self) -> dict[str, float]:
-        """Final-window error of each raw backend on clean eval episodes (benchmark rule:
-        the ensemble must be compared against the best individual baseline)."""
+        """Mean final-window error for each raw backend on clean eval episodes."""
         errors: dict[str, list[float]] = {}
         for episode in self._eval_episodes:
-            gt_end = episode.gt_positions[-1]
             for method, trajectory in episode.backend_trajectories.items():
-                if len(trajectory.timestamps) == 0:
-                    continue
-                end_position = np.array(
-                    [
-                        np.interp(episode.t_end, trajectory.timestamps, trajectory.positions[:, axis])
-                        for axis in range(3)
-                    ]
-                )
-                errors.setdefault(method, []).append(float(np.linalg.norm(end_position - gt_end)))
+                error = self._backend_final_error(episode, trajectory)
+                if error is not None:
+                    errors.setdefault(method, []).append(error)
         return {method: float(np.mean(values)) for method, values in errors.items()}
 
-    def run(self) -> dict:
-        spec = self.spec
-        best_improvement = -np.inf
-        best_iteration = -1
-        evals_since_best = 0
-        started = time.perf_counter()
+    def _record_iteration(self, iteration: int, mean_return: float, steps: int, stats: dict) -> None:
+        self._journal(
+            {"type": "iteration", "iteration": iteration, "mean_return": mean_return, "steps": steps, **stats}
+        )
+        self.log(
+            f"iter {iteration:>3}/{self.spec.iterations} return {mean_return:+.4f} "
+            f"kl {stats['approx_kl']:.4f} entropy {stats['entropy']:.2f}"
+        )
 
-        for iteration in range(1, spec.iterations + 1):
-            buffer, mean_return = self._collect()
-            stats = self.agent.update(buffer, self._update_rng)
-            self._journal(
-                {"type": "iteration", "iteration": iteration, "mean_return": mean_return, "steps": len(buffer), **stats}
-            )
-            self.log(
-                f"iter {iteration:>3}/{spec.iterations} return {mean_return:+.4f} "
-                f"kl {stats['approx_kl']:.4f} entropy {stats['entropy']:.2f}"
-            )
+    def _should_evaluate(self, iteration: int) -> bool:
+        return iteration % self.spec.eval_every == 0 or iteration == self.spec.iterations
 
-            if iteration % spec.eval_every != 0 and iteration != spec.iterations:
-                continue
-            evaluation = self._evaluate()
-            self._journal({"type": "eval", "iteration": iteration, **evaluation})
-            self.log(
-                f"eval @ iter {iteration}: improvement {evaluation['mean_improvement']:+.3f} "
-                f"(perturbed {evaluation['mean_improvement_perturbed']:+.3f})"
-            )
-            self.agent.save(self.output_dir / "policy_last.pt", extra_metadata={"iteration": iteration})
-            if evaluation["mean_improvement"] > best_improvement:
-                best_improvement = evaluation["mean_improvement"]
-                best_iteration = iteration
-                evals_since_best = 0
-                self.agent.save(
-                    self.output_dir / "policy_best.pt",
-                    extra_metadata={"iteration": iteration, "mean_improvement": best_improvement},
-                )
-                self._journal({"type": "best", "iteration": iteration, "mean_improvement": best_improvement})
-            else:
-                evals_since_best += 1
-            self._maybe_promote_curriculum(evaluation, iteration)
-            if evals_since_best >= spec.patience_evals:
-                self.log(f"Early stop: no eval improvement for {evals_since_best} evaluations")
-                self._journal({"type": "early_stop", "iteration": iteration})
-                break
+    def _record_evaluation(self, iteration: int, evaluation: dict) -> None:
+        self._journal({"type": "eval", "iteration": iteration, **evaluation})
+        self.log(
+            f"eval @ iter {iteration}: improvement {evaluation['mean_improvement']:+.3f} "
+            f"(perturbed {evaluation['mean_improvement_perturbed']:+.3f})"
+        )
 
+    def _update_best_checkpoint(
+        self,
+        iteration: int,
+        evaluation: dict,
+        best_improvement: float,
+        best_iteration: int,
+        evals_since_best: int,
+    ) -> tuple[float, int, int]:
+        self.agent.save(self.output_dir / "policy_last.pt", extra_metadata={"iteration": iteration})
+        if evaluation["mean_improvement"] <= best_improvement:
+            return best_improvement, best_iteration, evals_since_best + 1
+        best_improvement = evaluation["mean_improvement"]
+        self.agent.save(
+            self.output_dir / "policy_best.pt",
+            extra_metadata={"iteration": iteration, "mean_improvement": best_improvement},
+        )
+        self._journal({"type": "best", "iteration": iteration, "mean_improvement": best_improvement})
+        return best_improvement, iteration, 0
+
+    def _handle_evaluation(
+        self,
+        iteration: int,
+        best_improvement: float,
+        best_iteration: int,
+        evals_since_best: int,
+    ) -> tuple[float, int, int, bool]:
+        evaluation = self._evaluate()
+        self._record_evaluation(iteration, evaluation)
+        best_improvement, best_iteration, evals_since_best = self._update_best_checkpoint(
+            iteration, evaluation, best_improvement, best_iteration, evals_since_best
+        )
+        self._maybe_promote_curriculum(evaluation, iteration)
+        should_stop = evals_since_best >= self.spec.patience_evals
+        if should_stop:
+            self.log(f"Early stop: no eval improvement for {evals_since_best} evaluations")
+            self._journal({"type": "early_stop", "iteration": iteration})
+        return best_improvement, best_iteration, evals_since_best, should_stop
+
+    def _write_report(self, started: float, best_improvement: float, best_iteration: int) -> dict:
         report = {
             "spec": self._spec_json(),
             "train_episodes": len(self._train_episodes),
@@ -356,11 +404,32 @@ class TrainingHarness:
         self.log(f"Training report written to {self.output_dir / 'report.json'}")
         return report
 
+    def run(self) -> dict:
+        spec = self.spec
+        best_improvement = -np.inf
+        best_iteration = -1
+        evals_since_best = 0
+        started = time.perf_counter()
+
+        for iteration in range(1, spec.iterations + 1):
+            buffer, mean_return = self._collect()
+            stats = self.agent.update(buffer, self._update_rng)
+            self._record_iteration(iteration, mean_return, len(buffer), stats)
+            if not self._should_evaluate(iteration):
+                continue
+            best_improvement, best_iteration, evals_since_best, should_stop = self._handle_evaluation(
+                iteration, best_improvement, best_iteration, evals_since_best
+            )
+            if should_stop:
+                break
+
+        return self._write_report(started, best_improvement, best_iteration)
+
     def _spec_json(self) -> dict:
         data = asdict(self.spec)
-        data["inputs"] = [str(p) for p in self.spec.inputs]
+        data["inputs"] = list(map(str, self.spec.inputs))
         data["output_dir"] = str(self.spec.output_dir)
-        data["jepa_checkpoint"] = str(self.spec.jepa_checkpoint) if self.spec.jepa_checkpoint else None
+        data["jepa_checkpoint"] = _path_string_or_none(self.spec.jepa_checkpoint)
         data["hidden"] = list(self.spec.hidden)
         return data
 

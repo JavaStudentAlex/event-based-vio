@@ -27,6 +27,7 @@ MEASUREMENT_METHODS = ("event_imu", "event_vo", "image_imu", "multimodal_vio", "
 
 _RGB_SCALE_BIAS = 1.01
 _EVENT_SCALE_BIAS = 0.98
+_DEFAULT_GRAVITY = np.array([0.0, 0.0, 9.81], dtype=np.float64)
 
 
 @dataclass
@@ -89,25 +90,28 @@ def _imu_config_from_ground_truth(gt_poses: np.ndarray, gravity: np.ndarray) -> 
     return config
 
 
-def compute_ensemble_inputs(
-    sequence: MvsecSequence,
-    *,
-    event_window_sec: float = 0.05,
-    gravity: np.ndarray | None = None,
-) -> EnsembleInputs:
-    """Run every measurement backend once and package the fusion inputs."""
+def _required_episode_sources(sequence: MvsecSequence) -> tuple[np.ndarray, np.ndarray]:
     if sequence.imu is None or len(sequence.imu) == 0:
         raise ValueError("RL episode construction requires IMU data")
     if sequence.gt_poses is None or len(sequence.gt_poses) < 2:
         raise ValueError("RL episode construction requires ground-truth poses (rewards need them)")
-    ensure_event_frames(sequence, window_sec=event_window_sec)
+    return sequence.imu, sequence.gt_poses
 
-    gravity_vec = gravity if gravity is not None else np.array([0.0, 0.0, 9.81], dtype=np.float64)
-    imu_config = _imu_config_from_ground_truth(sequence.gt_poses, gravity_vec)
+
+def _gravity_vector(gravity: np.ndarray | None) -> np.ndarray:
+    if gravity is None:
+        return _DEFAULT_GRAVITY.copy()
+    return np.asarray(gravity, dtype=np.float64)
+
+
+def _measurement_trajectories(
+    sequence: MvsecSequence,
+    imu_config: ImuOnlyConfig,
+    event_window_sec: float,
+) -> dict[str, Trajectory]:
     rgb_vo_config = FeatureVoConfig(scale_bias=_RGB_SCALE_BIAS)
     event_vo_config = FeatureVoConfig(scale_bias=_EVENT_SCALE_BIAS)
-
-    trajectories = {
+    return {
         "rgb_vo": RgbVoBackend().run(sequence, config=rgb_vo_config),
         "event_vo": EventVoBackend().run(sequence, config=event_vo_config),
         "event_imu": EventImuBackend().run(
@@ -123,11 +127,24 @@ def compute_ensemble_inputs(
             ),
         ),
     }
+
+
+def compute_ensemble_inputs(
+    sequence: MvsecSequence,
+    *,
+    event_window_sec: float = 0.05,
+    gravity: np.ndarray | None = None,
+) -> EnsembleInputs:
+    """Run every measurement backend once and package the fusion inputs."""
+    imu, gt_poses = _required_episode_sources(sequence)
+    ensure_event_frames(sequence, window_sec=event_window_sec)
+
+    imu_config = _imu_config_from_ground_truth(gt_poses, _gravity_vector(gravity))
     return EnsembleInputs(
-        imu=sequence.imu,
-        backend_trajectories=trajectories,
+        imu=imu,
+        backend_trajectories=_measurement_trajectories(sequence, imu_config, event_window_sec),
         imu_config=imu_config,
-        gt_poses=sequence.gt_poses,
+        gt_poses=gt_poses,
     )
 
 

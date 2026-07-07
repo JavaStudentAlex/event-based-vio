@@ -136,17 +136,6 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: mapped
 - Notes: Backend code exists from M001. M002 validates correctness (S01 extrinsics hardening) and produces a benchmark comparison proving event_imu improves over imu_only (S03).
 
-### R013 — `event_imu` and later methods must produce the same artifact set and schema as `imu_only`.
-- Class: integration
-- Status: active
-- Description: `event_imu` and later methods must produce the same artifact set and schema as `imu_only`.
-- Why it matters: Comparisons are only meaningful if method outputs are structurally identical.
-- Source: user
-- Primary owning slice: M002/S02
-- Supporting slices: M002/S01
-- Validation: mapped
-- Notes: M002/S02 adds a cross-method test that runs imu_only, event_imu, and image_imu on the same synthetic sequence and asserts identical artifact structure.
-
 ### R014 — The project should support stronger baselines such as UltimateSLAM or ESVO if practical.
 - Class: differentiator
 - Status: active
@@ -159,6 +148,17 @@ This file is the explicit capability and coverage contract for the project.
 - Notes: External integration risk is intentionally deferred.
 
 ## Validated
+
+### R013 — `event_imu` and later methods must produce the same artifact set and schema as `imu_only`.
+- Class: integration
+- Status: validated
+- Description: `event_imu` and later methods must produce the same artifact set and schema as `imu_only`.
+- Why it matters: Comparisons are only meaningful if method outputs are structurally identical.
+- Source: user
+- Primary owning slice: M002/S02
+- Supporting slices: M002/S01
+- Validation: Mechanically validated by tests/test_cross_method_schema.py added in M002/S02, which runs imu_only, event_imu, and image_imu on the same synthetic sequence and asserts identical artifact structure.
+- Notes: M002/S02 adds a cross-method test that runs imu_only, event_imu, and image_imu on the same synthetic sequence and asserts identical artifact structure.
 
 ## Deferred
 
@@ -290,7 +290,7 @@ This file is the explicit capability and coverage contract for the project.
 | R010 | quality-attribute | active | M001-ncx5an/S05 | M001-ncx5an/S01, M001-ncx5an/S02, M001-ncx5an/S03, M001-ncx5an/S04 | mapped |
 | R011 | integration | active | M001-ncx5an/S03 | M001-ncx5an/S02 | mapped |
 | R012 | core-capability | active | M002/S03 | M002/S01 | mapped |
-| R013 | integration | active | M002/S02 | M002/S01 | mapped |
+| R013 | integration | validated | M002/S02 | M002/S01 | Mechanically validated by tests/test_cross_method_schema.py added in M002/S02, which runs imu_only, event_imu, and image_imu on the same synthetic sequence and asserts identical artifact structure. |
 | R014 | differentiator | active | M003/provisional | M001-ncx5an/S03, M002/provisional | unmapped |
 | R015 | integration | deferred | M003/provisional | none | unmapped |
 | R016 | operability | deferred | M003/provisional | none | unmapped |
@@ -305,7 +305,7 @@ This file is the explicit capability and coverage contract for the project.
 
 ## Coverage Summary
 
-- Active requirements: 14
-- Mapped to slices: 13
-- Validated: 0
+- Active requirements: 13
+- Mapped to slices: 12
+- Validated: 1 (R013)
 - Unmapped active requirements: 0

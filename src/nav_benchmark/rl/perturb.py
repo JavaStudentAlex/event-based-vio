@@ -72,35 +72,61 @@ def _ramp(timestamps: np.ndarray, perturbation: BackendPerturbation) -> np.ndarr
     return np.clip((timestamps - perturbation.t_start) / span, 0.0, 1.0)
 
 
-def _apply_one(trajectory: Trajectory, perturbation: BackendPerturbation) -> None:
+def _quality_arrays(trajectory: Trajectory) -> tuple[np.ndarray, np.ndarray]:
     confidence = trajectory.confidence
     health = trajectory.health
     if confidence is None or health is None:
         raise ValueError("Perturbations require materialized confidence/health arrays")
-    t = trajectory.timestamps
-    mask = (t >= perturbation.t_start) & (t <= perturbation.t_end)
-    if not np.any(mask):
-        return
+    return confidence, health
+
+
+def _unit_direction(perturbation: BackendPerturbation) -> np.ndarray:
     direction = np.asarray(perturbation.direction, dtype=np.float64)
     norm = np.linalg.norm(direction)
-    direction = direction / norm if norm > 0.0 else np.array([1.0, 0.0, 0.0])
+    if norm > 0.0:
+        return direction / norm
+    return np.array([1.0, 0.0, 0.0])
 
-    if perturbation.kind == KIND_DROPOUT:
-        health[mask] = PoseHealth.LOST.value
-        confidence[mask] = 0.0
-        return
-    if perturbation.kind == KIND_NOISE_BURST:
-        rng = np.random.Generator(np.random.PCG64(perturbation.seed))
-        noise = rng.normal(0.0, perturbation.magnitude_m, size=(int(np.count_nonzero(mask)), 3))
-        trajectory.positions[mask] += noise
-        confidence[mask] *= _NOISE_CONFIDENCE_SCALE
-        return
 
+def _apply_dropout(confidence: np.ndarray, health: np.ndarray, mask: np.ndarray) -> None:
+    health[mask] = PoseHealth.LOST.value
+    confidence[mask] = 0.0
+
+
+def _apply_noise_burst(
+    trajectory: Trajectory, confidence: np.ndarray, mask: np.ndarray, perturbation: BackendPerturbation
+) -> None:
+    rng = np.random.Generator(np.random.PCG64(perturbation.seed))
+    noise = rng.normal(0.0, perturbation.magnitude_m, size=(int(np.count_nonzero(mask)), 3))
+    trajectory.positions[mask] += noise
+    confidence[mask] *= _NOISE_CONFIDENCE_SCALE
+
+
+def _apply_bias(
+    trajectory: Trajectory, confidence: np.ndarray, mask: np.ndarray, perturbation: BackendPerturbation
+) -> None:
+    t = trajectory.timestamps
+    direction = _unit_direction(perturbation)
     offset = perturbation.magnitude_m * _ramp(t[mask], perturbation)[:, np.newaxis] * direction[np.newaxis, :]
     trajectory.positions[mask] += offset
     if perturbation.kind == KIND_BIAS_RAMP:
         confidence[mask] *= _HONEST_BIAS_CONFIDENCE_SCALE
     # KIND_CONFIDENT_BIAS intentionally leaves confidence untouched: the backend lies.
+
+
+def _apply_one(trajectory: Trajectory, perturbation: BackendPerturbation) -> None:
+    confidence, health = _quality_arrays(trajectory)
+    t = trajectory.timestamps
+    mask = (t >= perturbation.t_start) & (t <= perturbation.t_end)
+    if not np.any(mask):
+        return
+    if perturbation.kind == KIND_DROPOUT:
+        _apply_dropout(confidence, health, mask)
+        return
+    if perturbation.kind == KIND_NOISE_BURST:
+        _apply_noise_burst(trajectory, confidence, mask, perturbation)
+        return
+    _apply_bias(trajectory, confidence, mask, perturbation)
 
 
 def apply_perturbations(trajectory: Trajectory, perturbations: list[BackendPerturbation]) -> Trajectory:
@@ -138,6 +164,12 @@ def _sample_one(
     )
 
 
+def _should_sample(severity: int, methods: tuple[str, ...], t_start: float, t_end: float) -> bool:
+    if severity < 0:
+        raise ValueError("severity must be non-negative")
+    return severity > 0 and bool(methods) and t_end > t_start
+
+
 def sample_episode_perturbations(
     rng: np.random.Generator,
     methods: tuple[str, ...],
@@ -146,8 +178,6 @@ def sample_episode_perturbations(
     severity: int,
 ) -> list[BackendPerturbation]:
     """Draw ``severity`` seeded degradations for one episode (severity 0 = clean)."""
-    if severity < 0:
-        raise ValueError("severity must be non-negative")
-    if severity == 0 or not methods or t_end <= t_start:
+    if not _should_sample(severity, methods, t_start, t_end):
         return []
     return [_sample_one(rng, methods, t_start, t_end, severity) for _ in range(severity)]

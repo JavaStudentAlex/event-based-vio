@@ -22,21 +22,38 @@ from nav_benchmark.jepa.signals import FrameSignals, combine_stream_signals
 from nav_benchmark.rl.features import JepaObsSeries
 
 
-def load_external_embeddings(path: str | Path) -> tuple[np.ndarray, np.ndarray]:
-    """Load (times, embeddings) from an external-embedding HDF5/NPZ file."""
+def _existing_embedding_path(path: str | Path) -> Path:
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"External embedding file not found: {path}")
+    return path
+
+
+def _require_embedding_keys(container, path: Path, noun: str) -> None:
+    missing = [key for key in ("times", "embeddings") if key not in container]
+    if missing:
+        raise ValueError(f"{path} must contain 'times' and 'embeddings' {noun}")
+
+
+def _load_npz_arrays(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    with np.load(path) as data:
+        _require_embedding_keys(data, path, "arrays")
+        return data["times"], data["embeddings"]
+
+
+def _load_hdf5_arrays(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    with h5py.File(path, "r") as f:
+        _require_embedding_keys(f, path, "datasets")
+        return f["times"][:], f["embeddings"][:]
+
+
+def _load_embedding_arrays(path: Path) -> tuple[np.ndarray, np.ndarray]:
     if path.suffix == ".npz":
-        data = np.load(path)
-        if "times" not in data or "embeddings" not in data:
-            raise ValueError(f"{path} must contain 'times' and 'embeddings' arrays")
-        times, embeddings = data["times"], data["embeddings"]
-    else:
-        with h5py.File(path, "r") as f:
-            if "times" not in f or "embeddings" not in f:
-                raise ValueError(f"{path} must contain '/times' and '/embeddings' datasets")
-            times, embeddings = f["times"][:], f["embeddings"][:]
+        return _load_npz_arrays(path)
+    return _load_hdf5_arrays(path)
+
+
+def _coerce_embedding_arrays(path: Path, times: np.ndarray, embeddings: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     times = np.asarray(times, dtype=np.float64).reshape(-1)
     embeddings = np.asarray(embeddings, dtype=np.float64)
     if embeddings.ndim != 2 or len(times) != len(embeddings):
@@ -44,6 +61,12 @@ def load_external_embeddings(path: str | Path) -> tuple[np.ndarray, np.ndarray]:
     if len(times) > 1 and np.any(np.diff(times) < 0.0):
         raise ValueError(f"{path}: times must be monotonically non-decreasing")
     return times, embeddings
+
+
+def load_external_embeddings(path: str | Path) -> tuple[np.ndarray, np.ndarray]:
+    """Load (times, embeddings) from an external-embedding HDF5/NPZ file."""
+    path = _existing_embedding_path(path)
+    return _coerce_embedding_arrays(path, *_load_embedding_arrays(path))
 
 
 def signals_from_embeddings(times: np.ndarray, embeddings: np.ndarray) -> FrameSignals:

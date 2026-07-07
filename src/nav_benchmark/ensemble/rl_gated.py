@@ -115,21 +115,30 @@ def _control_boundaries(t: np.ndarray, period_sec: float) -> list[tuple[int, int
     ``0 .. len(t) - 2``. Every window contains at least one propagation step, so
     degenerate IMU timing cannot produce empty control steps.
     """
-    if period_sec <= 0.0:
-        raise ValueError("control_period_sec must be positive")
+    _validate_control_period(period_sec)
     last = len(t) - 2
     if last < 0:
         return []
     boundaries: list[tuple[int, int]] = []
     start = 0
     while start <= last:
-        deadline = float(t[start]) + period_sec
-        end = start
-        while end < last and float(t[end + 1]) < deadline:
-            end += 1
+        end = _control_window_end(t, start, last, period_sec)
         boundaries.append((start, end))
         start = end + 1
     return boundaries
+
+
+def _validate_control_period(period_sec: float) -> None:
+    if period_sec <= 0.0:
+        raise ValueError("control_period_sec must be positive")
+
+
+def _control_window_end(t: np.ndarray, start: int, last: int, period_sec: float) -> int:
+    deadline = float(t[start]) + period_sec
+    end = start
+    while end < last and float(t[end + 1]) < deadline:
+        end += 1
+    return end
 
 
 def _health_counts_key(health: str) -> str:
@@ -260,16 +269,70 @@ class GatedEkfFusionCore:
         self._state.step_weights[measurement.method][step_index] += 1.0 / sigma**2
         method_stats.accepted += 1
 
-    def _trust_map(self, trusts: dict[str, float] | np.ndarray) -> dict[str, float]:
-        if isinstance(trusts, dict):
-            missing = [m for m in self.methods if m not in trusts]
-            if missing:
-                raise ValueError(f"Missing trust values for methods: {missing}")
-            return {m: float(np.clip(trusts[m], 0.0, 1.0)) for m in self.methods}
+    def _trust_map_from_dict(self, trusts: dict[str, float]) -> dict[str, float]:
+        missing = [method for method in self.methods if method not in trusts]
+        if missing:
+            raise ValueError(f"Missing trust values for methods: {missing}")
+        return {method: float(np.clip(trusts[method], 0.0, 1.0)) for method in self.methods}
+
+    def _trust_map_from_array(self, trusts: np.ndarray) -> dict[str, float]:
         values = np.asarray(trusts, dtype=np.float64).reshape(-1)
         if values.size != len(self.methods):
             raise ValueError(f"Expected {len(self.methods)} trust values, got {values.size}")
-        return {m: float(np.clip(values[i], 0.0, 1.0)) for i, m in enumerate(self.methods)}
+        return {method: float(np.clip(values[index], 0.0, 1.0)) for index, method in enumerate(self.methods)}
+
+    def _trust_map(self, trusts: dict[str, float] | np.ndarray) -> dict[str, float]:
+        if isinstance(trusts, dict):
+            return self._trust_map_from_dict(trusts)
+        return self._trust_map_from_array(trusts)
+
+    def _empty_window_stats(self) -> dict[str, MethodWindowStats]:
+        return {method: MethodWindowStats() for method in self.methods}
+
+    def _consume_measurements_until(
+        self,
+        state_time: float,
+        state_index: int,
+        trust_map: dict[str, float],
+        stats: dict[str, MethodWindowStats],
+    ) -> None:
+        while self._next_measurement < len(self._measurements):
+            measurement = self._measurements[self._next_measurement]
+            if measurement.timestamp > state_time:
+                break
+            self._apply_measurement(measurement, trust_map[measurement.method], state_time, state_index, stats)
+            self._next_measurement += 1
+
+    def _run_control_window(
+        self,
+        first: int,
+        last: int,
+        trust_map: dict[str, float],
+        stats: dict[str, MethodWindowStats],
+    ) -> None:
+        for i in range(first, last + 1):
+            _propagate_imu_step(self._ekf, self._imu, i)
+            state_time = float(self._t[i + 1])
+            self._consume_measurements_until(state_time, i + 1, trust_map, stats)
+            _store_step(self._ekf, self._state, i + 1, state_time, self.config.base)
+
+    def _control_step_summary(
+        self,
+        start_time: float,
+        end_time: float,
+        stats: dict[str, MethodWindowStats],
+        trust_map: dict[str, float],
+    ) -> ControlStepSummary:
+        return ControlStepSummary(
+            index=self._step_index,
+            start_time=start_time,
+            end_time=end_time,
+            stats=stats,
+            last_accept_age_sec={method: end_time - self._last_accept_time[method] for method in self.methods},
+            ekf_position_sigma_m=self._ekf.position_sigma(),
+            ekf_speed_mps=float(np.linalg.norm(self._ekf.velocity)),
+            applied_trust=trust_map,
+        )
 
     def step(self, trusts: dict[str, float] | np.ndarray) -> ControlStepSummary:
         """Advance one control window applying ``trusts`` to every measurement in it."""
@@ -278,30 +341,12 @@ class GatedEkfFusionCore:
         trust_map = self._trust_map(trusts)
         first, last = self._boundaries[self._step_index]
         start_time = float(self._t[first])
-        stats = {method: MethodWindowStats() for method in self.methods}
+        stats = self._empty_window_stats()
 
-        for i in range(first, last + 1):
-            _propagate_imu_step(self._ekf, self._imu, i)
-            state_time = float(self._t[i + 1])
-            while self._next_measurement < len(self._measurements):
-                measurement = self._measurements[self._next_measurement]
-                if measurement.timestamp > state_time:
-                    break
-                self._apply_measurement(measurement, trust_map[measurement.method], state_time, i + 1, stats)
-                self._next_measurement += 1
-            _store_step(self._ekf, self._state, i + 1, state_time, self.config.base)
+        self._run_control_window(first, last, trust_map, stats)
 
         end_time = float(self._t[last + 1])
-        summary = ControlStepSummary(
-            index=self._step_index,
-            start_time=start_time,
-            end_time=end_time,
-            stats=stats,
-            last_accept_age_sec={m: end_time - self._last_accept_time[m] for m in self.methods},
-            ekf_position_sigma_m=self._ekf.position_sigma(),
-            ekf_speed_mps=float(np.linalg.norm(self._ekf.velocity)),
-            applied_trust=trust_map,
-        )
+        summary = self._control_step_summary(start_time, end_time, stats, trust_map)
         self._step_index += 1
         return summary
 

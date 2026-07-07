@@ -15,7 +15,7 @@
 - [x] **S01: Extrinsics-aware Event+IMU Correction** `risk:high` `depends:[]`
   > After this: After this: EventImuBackend uses calibrated IMU-to-camera rotation from MVSEC calibration data to transform event-derived displacements into the body frame; synthetic tests prove extrinsics path works correctly and existing tests still pass
 
-- [ ] **S02: Cross-method Artifact Schema Validation** `risk:medium` `depends:[S01]`
+- [x] **S02: Cross-method Artifact Schema Validation** `risk:medium` `depends:[S01]`
   > After this: After this: a pytest test runs imu_only, event_imu, and image_imu on the same synthetic sequence and asserts they produce structurally identical artifact sets — same CSV columns, same file layout, same validation pass
 
 - [ ] **S03: Synthetic Benchmark Comparison Report** `risk:low` `depends:[S01,S02]`
