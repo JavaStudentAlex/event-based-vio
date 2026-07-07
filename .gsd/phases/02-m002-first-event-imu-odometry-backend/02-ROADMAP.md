@@ -20,6 +20,7 @@
 
 - [ ] **S03: Synthetic Benchmark Comparison Report** `risk:low` `depends:[S01,S02]`
   > After this: After this: a pytest test runs imu_only, event_imu, and image_imu through the compare pipeline on a deterministic synthetic sequence, produces comparison artifacts (metrics JSON, CSV table, plots), and asserts event_imu ATE is lower than imu_only ATE
+  > *Implementation note*: T05 added the end-to-end synthetic benchmark comparison test verifying ATE improvements.
 
 ## Boundary Map
 
