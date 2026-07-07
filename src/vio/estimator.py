@@ -27,7 +27,21 @@ class Estimator:
         self.t: float = 0.0
 
     def step(self, event_packets: Iterable[EventPacket], imu_samples: Iterable[IMUSample]) -> EstimatorState:
-        # Normalize event packets (no-op aside from clamping)
-        _ = self.events.normalize(event_packets)
-        qx, qy, qz, qw = self.imu.step(imu_samples)
+        # Convert to lists to allow multiple passes / safe iteration
+        event_list = list(event_packets)
+        imu_list = list(imu_samples)
+
+        # Normalize event packets
+        _ = self.events.normalize(event_list)
+        qx, qy, qz, qw = self.imu.step(imu_list)
+
+        # Update current estimator timestamp to the latest timestamp among processed inputs
+        ts = []
+        for p in event_list:
+            ts.append(p.t)
+        for s in imu_list:
+            ts.append(s.t)
+        if ts:
+            self.t = max(ts)
+
         return EstimatorState(t=self.t, qx=qx, qy=qy, qz=qz, qw=qw)
