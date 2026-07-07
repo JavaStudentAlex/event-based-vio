@@ -1,8 +1,8 @@
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable, Tuple
 
 from .event_processor import EventPacket, EventProcessor
-from .imu_processor import IMUSample, IMUProcessor
+from .imu_processor import IMUProcessor, IMUSample
 
 
 @dataclass

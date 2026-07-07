@@ -1,4 +1,4 @@
-from src.vio.event_processor import EventProcessor, EventPacket
+from src.vio.event_processor import EventPacket, EventProcessor
 
 
 def test_event_processor_clamps_and_normalizes():

@@ -1,5 +1,5 @@
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable, List
 
 
 @dataclass(frozen=True)
@@ -20,9 +20,9 @@ class EventPacket:
     """
 
     t: float
-    x: List[int]
-    y: List[int]
-    p: List[int]
+    x: list[int]
+    y: list[int]
+    p: list[int]
 
 
 class EventProcessor:
@@ -37,12 +37,12 @@ class EventProcessor:
         self.width = int(width)
         self.height = int(height)
 
-    def normalize(self, packets: Iterable[EventPacket]) -> List[EventPacket]:
+    def normalize(self, packets: Iterable[EventPacket]) -> list[EventPacket]:
         """
         Return packets with x/y clamped to the valid image range.
         No filtering, no resampling; stable/deterministic.
         """
-        out: List[EventPacket] = []
+        out: list[EventPacket] = []
         for pkt in packets:
             xs = [min(self.width - 1, max(0, int(v))) for v in pkt.x]
             ys = [min(self.height - 1, max(0, int(v))) for v in pkt.y]

@@ -1,6 +1,6 @@
-from dataclasses import dataclass
-from typing import Iterable, List, Tuple
 import math
+from collections.abc import Iterable
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -41,7 +41,7 @@ class IMUProcessor:
         self.t_last: float | None = None
 
     @staticmethod
-    def _quat_mul(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]):
+    def _quat_mul(a: tuple[float, float, float, float], b: tuple[float, float, float, float]):
         ax, ay, az, aw = a
         bx, by, bz, bw = b
         return (
@@ -52,14 +52,14 @@ class IMUProcessor:
         )
 
     @staticmethod
-    def _axis_angle_to_quat(axis: Tuple[float, float, float], angle: float):
+    def _axis_angle_to_quat(axis: tuple[float, float, float], angle: float):
         x, y, z = axis
         half = 0.5 * angle
         s = math.sin(half)
         c = math.cos(half)
         return (x * s, y * s, z * s, c)
 
-    def step(self, samples: Iterable[IMUSample]) -> Tuple[float, float, float, float]:
+    def step(self, samples: Iterable[IMUSample]) -> tuple[float, float, float, float]:
         for s in samples:
             if self.t_last is None:
                 self.t_last = s.t
