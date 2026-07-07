@@ -1,4 +1,4 @@
-# M002: M002: First Event+IMU Odometry Backend
+# M002: M002: M002: First Event+IMU Odometry Backend
 
 **Vision:** Harden the existing event_imu and image_imu backends with calibrated extrinsics, validate that all methods produce structurally identical artifact sets (R013), and produce a reproducible synthetic benchmark comparison demonstrating event_imu improves drift over imu_only (R012). This milestone closes the loop on event-camera odometry correctness and cross-method comparability.
 
@@ -24,5 +24,3 @@
 ## Boundary Map
 
 ## Boundary Map
-
-### S01 → S02\n\nProduces:\n- Updated `EventImuBackend` that consumes `Calibration.data` for IMU-to-camera transform\n- New helper `_extrinsics_rotation_from_calibration(calibration) -> Rotation | None`\n- Existing test contract preserved: all current event_imu tests still pass\n\nConsumes:\n- `MvsecSequence.calibration` (from M001)\n- `EventImuBackend` interface (from M001)\n\n### S02 → S03\n\nProduces:\n- Test fixture that runs imu_only, event_imu, image_imu on a shared synthetic sequence\n- Assertion helpers for structural artifact identity (CSV columns, file list, validation schema)\n- R013 mechanically validated\n\nConsumes:\n- Updated `EventImuBackend` from S01\n- `export_project_csv`, `validate_run_directory` from M001\n\n### S03 (terminal)\n\nProduces:\n- Synthetic benchmark comparison test using `compare_runs`\n- Comparison artifacts: `metrics_comparison.json`, `comparison_table.csv`, trajectory overlay plot\n- R012 formally closed\n\nConsumes:\n- All three backends from S01/S02\n- `compare_runs`, `write_comparison_artifacts` from M001 reporting module
