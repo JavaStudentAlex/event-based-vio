@@ -1,5 +1,5 @@
 default_stages: [pre-commit]
-exclude: '^(\.github/|\.skillss/|\.skills/|\.agents/|\.gsd/(?!.*\.html$)|skills/|mutants/|\.venv/)'
+exclude: '^(\.github/|\.skillss/|\.skills/|\.agents/|\.gsd/(?!.*\.html$)|skills/|mutants/|\.venv/|notebooks/)'
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -38,7 +38,7 @@ repos:
         name: Mypy
         entry: >-
           bash -c 'mapfile -t py_files < <(git ls-files "*.py" | grep -Ev
-          "(^|/)(\.agents|\.codex|\.github|\.gsd|\.skills|skills|mutants|tests)/|(^|/)test_[^/]*\.py$|_test\.py$" || true);
+          "(^|/)(\.agents|\.codex|\.github|\.gsd|\.skills|skills|mutants|notebooks|tests)/|(^|/)test_[^/]*\.py$|_test\.py$" || true);
           if [ "${#py_files[@]}" -eq 0 ]; then echo "No production Python files found; skipping mypy."; exit 0; fi;
           uv run --only-dev mypy "${py_files[@]}"'
         language: system

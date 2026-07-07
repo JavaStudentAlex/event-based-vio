@@ -42,7 +42,7 @@ jobs:
       - name: Run Mypy
         run: |
           set -euo pipefail
-          mapfile -t py_files < <(git ls-files '*.py' | grep -Ev '(^|/)(\.agents|\.codex|\.github|\.gsd|\.skills|skills|mutants|tests)/|(^|/)test_[^/]*\.py$|_test\.py$' || true)
+          mapfile -t py_files < <(git ls-files '*.py' | grep -Ev '(^|/)(\.agents|\.codex|\.github|\.gsd|\.skills|skills|mutants|notebooks|tests)/|(^|/)test_[^/]*\.py$|_test\.py$' || true)
           if [ "${#py_files[@]}" -eq 0 ]; then
             echo "No production Python files found; skipping mypy."
             exit 0
@@ -52,7 +52,7 @@ jobs:
       - name: Run Bandit
         run: |
           set -euo pipefail
-          mapfile -t py_files < <(git ls-files '*.py' | grep -Ev '(^|/)(\.agents|\.codex|\.github|\.gsd|\.skills|skills|mutants|tests)/|(^|/)test_[^/]*\.py$|_test\.py$' || true)
+          mapfile -t py_files < <(git ls-files '*.py' | grep -Ev '(^|/)(\.agents|\.codex|\.github|\.gsd|\.skills|skills|mutants|notebooks|tests)/|(^|/)test_[^/]*\.py$|_test\.py$' || true)
           if [ "${#py_files[@]}" -eq 0 ]; then
             echo "No production Python files found; skipping Bandit."
             exit 0
@@ -67,7 +67,7 @@ jobs:
       - name: Run py-compile
         run: |
           set -euo pipefail
-          mapfile -t py_files < <(git ls-files '*.py' | grep -Ev '(^|/)(\.agents|\.codex|\.gsd|\.skills|skills|mutants)/' || true)
+          mapfile -t py_files < <(git ls-files '*.py' | grep -Ev '(^|/)(\.agents|\.codex|\.gsd|\.skills|skills|mutants|notebooks)/' || true)
           if [ "${#py_files[@]}" -eq 0 ]; then
             echo "No Python files found; skipping py_compile."
             exit 0
