@@ -46,6 +46,7 @@ class EventProcessor:
         for pkt in packets:
             xs = [min(self.width - 1, max(0, int(v))) for v in pkt.x]
             ys = [min(self.height - 1, max(0, int(v))) for v in pkt.y]
-            ps = [1 if int(b) != 0 else 0 for b in pkt.p]
+            # Polarity normalized to 0/1 with negatives treated as 0
+            ps = [1 if int(b) > 0 else 0 for b in pkt.p]
             out.append(EventPacket(t=float(pkt.t), x=xs, y=ys, p=ps))
         return out
