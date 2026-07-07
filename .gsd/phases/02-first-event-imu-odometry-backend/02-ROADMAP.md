@@ -1,4 +1,4 @@
-# M002: First Event+IMU Odometry Backend
+# M002: M002: First Event+IMU Odometry Backend
 
 **Vision:** Harden the existing event_imu and image_imu backends with calibrated extrinsics, validate that all methods produce structurally identical artifact sets (R013), and produce a reproducible synthetic benchmark comparison demonstrating event_imu improves drift over imu_only (R012). This milestone closes the loop on event-camera odometry correctness and cross-method comparability.
 
@@ -20,6 +20,8 @@
 
 - [ ] **S03: Synthetic Benchmark Comparison Report** `risk:low` `depends:[S01,S02]`
   > After this: After this: a pytest test runs imu_only, event_imu, and image_imu through the compare pipeline on a deterministic synthetic sequence, produces comparison artifacts (metrics JSON, CSV table, plots), and asserts event_imu ATE is lower than imu_only ATE
+
+## Boundary Map
 
 ## Boundary Map
 
