@@ -1,6 +1,4 @@
-import csv
 import json
-from pathlib import Path
 
 import numpy as np
 
@@ -21,12 +19,13 @@ from nav_benchmark.reporting.compare import compare_runs, write_comparison_artif
 from nav_benchmark.trajectory.export import export_project_csv, export_tum
 from nav_benchmark.trajectory.models import PoseHealth
 
+
 def _event_rich_synthetic_sequence() -> MvsecSequence:
     """Create a synthetic sequence with clear lateral drift and strong event cues."""
     num_frames = 100
     duration = 2.0
     timestamps = np.linspace(0.0, duration, num_frames, dtype=np.float64)
-    dt = timestamps[1] - timestamps[0]
+    timestamps[1] - timestamps[0]
 
     imu = np.zeros(num_frames, dtype=IMU_DTYPE)
     imu["t"] = timestamps
@@ -46,7 +45,7 @@ def _event_rich_synthetic_sequence() -> MvsecSequence:
     gt_poses["t"] = timestamps
 
     gt_poses["x"] = velocity_x * timestamps
-    gt_poses["y"] = 0.5 * np.cos(timestamps * 2.0) - 0.5 # start at 0
+    gt_poses["y"] = 0.5 * np.cos(timestamps * 2.0) - 0.5  # start at 0
     gt_poses["z"] = 0.5 * np.sin(timestamps * 3.0)
     gt_poses["qw"] = 1.0
 
@@ -89,6 +88,7 @@ def _event_rich_synthetic_sequence() -> MvsecSequence:
         event_frame_timestamps=timestamps,
     )
 
+
 def _textured_frame(*, shift: float, size: int = 64) -> np.ndarray:
     frame = np.zeros((size, size), dtype=np.uint8)
     s = int(shift) % 32
@@ -97,6 +97,7 @@ def _textured_frame(*, shift: float, size: int = 64) -> np.ndarray:
     frame[::4, :] = np.maximum(frame[::4, :], 45)
     frame[:, ::5] = np.maximum(frame[:, ::5], 35)
     return frame
+
 
 def _event_frame(*, shift: float, size: int = 64) -> np.ndarray:
     # the shift estimation code uses shape (H, W) or (H, W, 3).
@@ -109,6 +110,7 @@ def _event_frame(*, shift: float, size: int = 64) -> np.ndarray:
     # uses phase correlation which might fail or get confused. Let's make only one block.
     # frame[38:50, 36 - s : 48 - s] = 1
     return frame
+
 
 def _synthetic_events(timestamps: np.ndarray) -> np.ndarray:
     events = np.zeros(len(timestamps) * 8, dtype=EVENT_DTYPE)
@@ -128,11 +130,7 @@ def test_benchmark_comparison_event_imu_vs_imu_only(tmp_path):
     sequence = _event_rich_synthetic_sequence()
 
     # Run backends
-    backends = [
-        ("imu_only", ImuOnlyBackend()),
-        ("event_imu", EventImuBackend()),
-        ("image_imu", ImageImuBackend())
-    ]
+    backends = [("imu_only", ImuOnlyBackend()), ("event_imu", EventImuBackend()), ("image_imu", ImageImuBackend())]
 
     run_dirs = []
 
@@ -174,7 +172,7 @@ def test_benchmark_comparison_event_imu_vs_imu_only(tmp_path):
 
     # 3. Write comparison artifacts
     comparison_dir = tmp_path / "comparison"
-    artifacts = write_comparison_artifacts(summaries, comparison_dir)
+    write_comparison_artifacts(summaries, comparison_dir)
 
     # 4. Assertions
     # Artifacts exist and are non-empty
@@ -207,7 +205,9 @@ def _gt_trajectory(sequence: MvsecSequence):
         timestamps=sequence.gt_poses["t"],
         method="ground_truth",
         positions=np.stack([sequence.gt_poses["x"], sequence.gt_poses["y"], sequence.gt_poses["z"]], axis=1),
-        orientations=np.stack([sequence.gt_poses["qx"], sequence.gt_poses["qy"], sequence.gt_poses["qz"], sequence.gt_poses["qw"]], axis=1),
+        orientations=np.stack(
+            [sequence.gt_poses["qx"], sequence.gt_poses["qy"], sequence.gt_poses["qz"], sequence.gt_poses["qw"]], axis=1
+        ),
         velocities=np.zeros((count, 3), dtype=np.float64),
         confidence=np.ones(count, dtype=np.float64),
         health=np.array([PoseHealth.OK.value] * count, dtype=object),
